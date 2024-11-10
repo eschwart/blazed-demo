@@ -1,0 +1,12 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+blazed-demo = { path = ".." }
+thiserror = "2.0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
