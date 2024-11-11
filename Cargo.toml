@@ -15,11 +15,11 @@ log = "0.4.22"
 nalgebra = { version = "0.33.2", features = ["serde-serialize"] }
 packet_enum = "0.1.6"
 parking_lot = "0.12.3"
-serde = { version = "1.0.214", features = ["derive"] }
+serde = { version = "1.0.215", features = ["derive"] }
 spin_sleep = "1.2.1"
 strum = { version = "0.26.3", features = ["derive"] }
 sync_select = "0.1.0"
-thiserror = "2.0.1"
+thiserror = "2.0.3"
 
 [profile.release]
 lto = true
