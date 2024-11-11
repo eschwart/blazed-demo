@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-pub use blazed::{Camera as RawCamera, *};
+pub use blazed_demo::{Camera as RawCamera, *};
 pub use cfg::*;
 pub use err::*;
 pub use fps::*;
