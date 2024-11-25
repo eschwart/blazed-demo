@@ -13,7 +13,6 @@ use std::{
     time::Duration,
 };
 
-pub use blazed_demo::{Camera as RawCamera, *};
 pub use cfg::*;
 pub use err::*;
 pub use fps::*;
@@ -22,6 +21,8 @@ pub use net::*;
 pub use obj::*;
 pub use render::*;
 pub use util::*;
+
+pub use blazed_demo::{Camera as RawCamera, *};
 
 pub type Tps = Arc<AtomicU16>;
 pub type Keys = Arc<RwLock<Flags>>;

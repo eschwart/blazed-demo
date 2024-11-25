@@ -66,7 +66,7 @@ fn main() -> Result {
     );
 
     // handle UDP packets
-    init_udp(&s, udp, udp_clone, clients_udp, sender_addr);
+    init_udp(&s, udp, udp_clone, clients_udp, sender_addr, cfg.tps());
 
     Ok(())
 }

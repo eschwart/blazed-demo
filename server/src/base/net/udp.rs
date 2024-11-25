@@ -15,13 +15,13 @@ fn handle_dist(
     clients_udp: UdpClients,
     updated: Arc<Mutex<HashSet<SocketAddr>>>,
     advance: Running,
+    tps: Duration,
 ) -> JoinHandle<Result> {
     s.spawn(move || -> Result {
-        let tick_delay = Duration::from_secs_f32((1000.0 / 128.0) / 1000.0);
         let (spinner, backoff): (SpinSleeper, Backoff) = Default::default();
 
         loop {
-            spinner.sleep(tick_delay);
+            spinner.sleep(tps);
             while !advance.load(Ordering::SeqCst) {
                 if backoff.is_completed() {
                     park();
@@ -94,8 +94,9 @@ fn init_write(
     udp: UdpServer,
     clients_udp: UdpClients,
     receiver_packet: Receiver<(Packet, SocketAddr)>,
+    tps: Duration,
 ) {
-    let updated = Arc::new(Mutex::new(HashSet::<SocketAddr>::new()));
+    let updated: Arc<Mutex<HashSet<SocketAddr>>> = Default::default();
     let advance: Running = Default::default();
 
     let dist_thread = handle_dist(
@@ -104,6 +105,7 @@ fn init_write(
         clients_udp.clone(),
         updated.clone(),
         advance.clone(),
+        tps,
     );
 
     handle_packets(
@@ -166,13 +168,14 @@ pub fn init_udp(
     udp_b: UdpServer,
     clients_udp: UdpClients,
     sender_addr: Sender<SocketAddr>,
+    tps: Duration,
 ) {
     // real-time game data channel
     let (sender_packet, receiver_packet) = bounded(8);
 
     s.spawn_with(move |s| -> Result {
         // handle outgoing
-        init_write(s, udp_a, clients_udp.clone(), receiver_packet);
+        init_write(s, udp_a, clients_udp.clone(), receiver_packet, tps);
 
         // handle incoming UDP packets
         handle_incoming(s, udp_b, clients_udp, sender_packet, sender_addr);

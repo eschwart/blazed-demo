@@ -28,10 +28,11 @@ Options:
 
 **Server**
 ```bash
-Usage: server --tcp-addr <TCP_ADDR> --udp-addr <UDP_ADDR>        
+Usage: server [OPTIONS] --tcp-addr <TCP_ADDR> --udp-addr <UDP_ADDR>
 
 Options:
   -t, --tcp-addr <TCP_ADDR>  TCP IP address
   -u, --udp-addr <UDP_ADDR>  UDP IP address
+      --tps <TPS>            [default: 128]
   -h, --help                 Print help
 ```

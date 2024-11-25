@@ -1,4 +1,4 @@
-// #![windows_subsystem = "windows"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod base;
 
@@ -50,7 +50,7 @@ fn handle_raw_events(
                     match user_event {
                         GameEvent::Quit => break,
                         GameEvent::Reset => {
-                            // remove and dealloate all player objects
+                            // remove and deallocate all player objects
                             for id in players.write().drain().map(|p| p.0) {
                                 if let Some(obj) = objects.remove(&id) {
                                     free_object(gl, &obj);
