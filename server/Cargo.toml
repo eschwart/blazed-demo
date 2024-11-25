@@ -6,7 +6,3 @@ edition = "2021"
 [dependencies]
 blazed-demo = { path = ".." }
 thiserror = "2.0.3"
-
-[profile.release]
-lto = true
-codegen-units = 1
