@@ -9,12 +9,12 @@ git clone https://github.com/splurf/blazed-demo
 ```
 
 ## Running the Client
+Before attempting to compile the client, you will need to configure [SDL2](https://github.com/Rust-SDL2/rust-sdl2?tab=readme-ov-file#windows-msvc). Afterwards, you should have the library files placed into your toolchain and the `.dll` file at `client\SDL2.dll` in this project's directory.
 ```bash
-cd client
-cargo r --release
+cargo r --release --manifest-path client\Cargo.toml
 ```
 
-## Additional configuration
+## Additional Usage
 **Client**
 ```bash
 Usage: client server --remote-tcp-addr <REMOTE_TCP_ADDR> --local-udp-addr <LOCAL_UDP_ADDR> --remote-udp-addr <REMOTE_UDP_ADDR>
@@ -36,3 +36,6 @@ Options:
       --tps <TPS>            [default: 128]
   -h, --help                 Print help
 ```
+
+## Notes
+- The server has a `--tps` flag, which will allow you to specify the tick rate (min: 1, max: 255).
