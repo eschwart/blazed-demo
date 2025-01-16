@@ -1,67 +1,134 @@
 use crate::*;
-
-use nalgebra::{Matrix4, Perspective3, Point3, Rotation3, Translation3, UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
+use std::ops::{AddAssign, SubAssign};
 
-const RADIAN: f32 = std::f32::consts::PI / 180.0;
+pub type Point = nalgebra::Point3<f32>;
+pub type Vector = nalgebra::Vector3<f32>;
+pub type Matrix = nalgebra::Matrix4<f32>;
+pub type Translation = nalgebra::Translation3<f32>;
+pub type Rotation = nalgebra::Rotation3<f32>;
+pub type Scale = nalgebra::Scale3<f32>;
+pub type Perspective = nalgebra::Perspective3<f32>;
+pub type UnitQuaternion = nalgebra::UnitQuaternion<f32>;
+pub type Isometry = nalgebra::Isometry3<f32>;
 
-pub type Point = Point3<f32>;
-pub type Vector = Vector3<f32>;
-pub type Matrix = Matrix4<f32>;
-pub type Translation = Translation3<f32>;
-pub type Rotation = Rotation3<f32>;
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Axis {
+    inner: f32,
+    radians: f32,
+    sensitivity: f32,
+}
+
+impl Axis {
+    const X_BOUND: f32 = 360.0;
+    const Y_LOWER_BOUND: f32 = -89.0;
+    const Y_UPPER_BOUND: f32 = 89.0;
+
+    pub const fn new(sensitivity: f32) -> Self {
+        Self {
+            inner: 0.0,
+            radians: 0.0,
+            sensitivity,
+        }
+    }
+
+    pub const fn radians(&self) -> f32 {
+        self.radians
+    }
+
+    pub const fn sensitivity(&self) -> f32 {
+        self.sensitivity
+    }
+
+    pub fn sensitivity_mut(&mut self) -> &mut f32 {
+        &mut self.sensitivity
+    }
+
+    fn x_bound(&mut self) {
+        self.inner = (self.inner + Self::X_BOUND) % Self::X_BOUND;
+    }
+
+    fn y_bound(&mut self) {
+        self.inner = clamp_unchecked(self.inner, Self::Y_LOWER_BOUND, Self::Y_UPPER_BOUND);
+    }
+
+    fn update(&mut self) {
+        self.radians = self.inner * RADIAN
+    }
+}
+
+impl AddAssign<i32> for Axis {
+    fn add_assign(&mut self, rhs: i32) {
+        self.inner += rhs as f32 * self.sensitivity;
+    }
+}
+
+impl SubAssign<i32> for Axis {
+    fn sub_assign(&mut self, rhs: i32) {
+        self.inner -= rhs as f32 * self.sensitivity;
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CameraAttr {
     pub fov: f32,
-    pub yaw: f32,
-    pub pitch: f32,
     pub speed: f32,
-    pub sensitivity: f32,
+    pub yaw: Axis,
+    pub pitch: Axis,
     pub eye: Vector,
     pub target: Vector,
     pub up: Vector,
 }
 
 impl CameraAttr {
-    pub const fn new() -> Self {
-        Self {
-            fov: 90.0,
-            yaw: 0.0,
-            pitch: 0.0,
+    pub fn new(pos: Vector) -> Self {
+        let mut attr = Self {
+            fov: 80.0,
             speed: 0.05,
-            sensitivity: 0.05,
-            eye: Vector::new(0.0, 0.0, 0.0),
+            yaw: Axis::new(0.1),
+            pitch: Axis::new(0.1),
+            eye: pos,
             target: Vector::new(0.0, 0.0, -1.0),
             up: Vector::new(0.0, 1.0, 0.0),
-        }
+        };
+
+        // initial setup
+        attr.look_at(0, 0);
+
+        attr
     }
 
     pub fn upt_fov(&mut self, precise_y: f32) {
-        self.fov -= precise_y;
-        self.fov = clamp_unchecked(self.fov, 30.0, 110.0);
+        self.fov = clamp_unchecked(self.fov - precise_y, 30.0, 110.0);
     }
 
     pub fn look_at(&mut self, xrel: i32, yrel: i32) {
-        self.yaw -= xrel as f32 * self.sensitivity;
-        self.pitch += yrel as f32 * self.sensitivity;
+        // incr/decr pitch/yaw values
+        self.yaw += xrel;
+        self.pitch -= yrel;
 
-        self.pitch = clamp_unchecked(self.pitch, -89.0, 89.0);
+        // prevent overflow
+        self.yaw.x_bound();
 
-        // is this necessary?
-        if self.yaw <= -360.0 || self.yaw >= 360.0 {
-            self.yaw = 0.0
-        }
+        // prevent unecessary vertical freedom
+        self.pitch.y_bound();
 
-        let yaw_radians = self.yaw * RADIAN;
-        let pitch_radians = self.pitch * RADIAN;
+        // update radian values
+        self.yaw.update();
+        self.pitch.update();
+
+        // radian values of each axis
+        let yaw_radians = self.yaw.radians;
+        let pitch_radians = self.pitch.radians;
 
         let pitch_cos = pitch_radians.cos();
 
+        // calculate new target values
         self.target.x = yaw_radians.sin() * pitch_cos;
         self.target.y = pitch_radians.sin();
         self.target.z = -yaw_radians.cos() * pitch_cos;
 
+        // normalize
         self.target.normalize_mut();
     }
 
@@ -77,93 +144,69 @@ impl CameraAttr {
                 Flags::S => self.eye -= target.normalize() * self.speed,
                 Flags::D => self.eye += target.cross(&self.up).normalize() * self.speed,
 
-                Flags::UP => (),
-                Flags::LEFT => (),
-                Flags::DOWN => (),
-                Flags::RIGHT => (),
-
                 Flags::SPACE => self.eye += self.up * self.speed,
                 Flags::SHIFT => self.eye -= self.up * self.speed,
-                Flags::CTRL => (),
 
-                _ => error!("Unexpected keyboard input"),
+                _ => (),
             }
         }
-    }
-
-    pub fn rotation(&self) -> Matrix {
-        let rotation_yaw = UnitQuaternion::from_axis_angle(&Vector::y_axis(), -self.yaw * RADIAN);
-        let rotation_pitch =
-            UnitQuaternion::from_axis_angle(&Vector::x_axis(), self.pitch * RADIAN);
-        (rotation_yaw * rotation_pitch).to_homogeneous()
-    }
-
-    pub fn translation(&self) -> Matrix {
-        Translation::from(self.eye).to_homogeneous()
     }
 }
 
 impl Default for CameraAttr {
     fn default() -> Self {
-        Self::new()
+        Self::new(Vector::zeros())
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct Camera {
-    pub attr: CameraAttr,
-    pub model: Matrix,
-    pub view: Matrix,
-    pub projection: Perspective3<f32>,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RawCamera {
+    attr: CameraAttr,
+    view: Matrix,
+    projection: Perspective,
 }
 
-impl Camera {
-    pub fn init((w, h): (u32, u32)) -> Self {
-        let attr = CameraAttr::default();
+impl RawCamera {
+    pub fn new((w, h): (u32, u32)) -> Self {
         let aspect = Self::calc_aspect_ratio(w as i32, h as i32);
-        let fov = attr.fov;
-
-        Self {
-            attr,
-            model: Matrix4::identity(),
-            view: Matrix4::identity(),
-            projection: Perspective3::new(aspect, fov * RADIAN, 0.01, 1000.0),
-        }
+        Self::init(aspect)
     }
 
-    fn calc_aspect_ratio(w: i32, h: i32) -> f32 {
-        w as f32 / h as f32
+    pub const fn attr(&self) -> CameraAttr {
+        self.attr
     }
 
-    pub fn model(&self) -> &[f32] {
-        self.model.as_slice()
+    pub fn attr_mut(&mut self) -> &mut CameraAttr {
+        &mut self.attr
     }
 
-    pub fn view(&self) -> &[f32] {
-        self.view.as_slice()
+    pub const fn view(&self) -> &Matrix {
+        &self.view
     }
 
-    pub fn projection(&self) -> &[f32] {
-        self.projection.as_matrix().as_slice()
+    pub fn projection(&self) -> &Matrix {
+        self.projection.as_matrix()
     }
 
-    pub fn near(&self) -> f32 {
-        self.projection.znear()
+    pub const fn pos(&self) -> &Vector {
+        &self.attr.eye
     }
 
-    pub fn far(&self) -> f32 {
-        self.projection.zfar()
+    pub fn reset(&mut self) {
+        let aspect = self.projection.aspect();
+        *self = Self::init(aspect);
     }
 
     pub fn upt_aspect_ratio(&mut self, w: i32, h: i32) {
-        self.projection.set_aspect(Self::calc_aspect_ratio(w, h));
-        self.upt()
+        let aspect = Self::calc_aspect_ratio(w, h);
+        self.projection.set_aspect(aspect);
+        self.upt();
     }
 
     pub fn upt_fov(&mut self, precise_y: f32) {
         self.attr.upt_fov(precise_y);
         self.projection.set_fovy(self.attr.fov * RADIAN);
-        self.upt()
+        self.upt();
     }
 
     pub fn look_at(&mut self, xrel: i32, yrel: i32) {
@@ -176,11 +219,37 @@ impl Camera {
         self.upt();
     }
 
+    pub fn replace(&mut self, attr: CameraAttr) {
+        self.attr = attr;
+        self.upt();
+    }
+
     pub fn upt(&mut self) {
-        self.view = Matrix4::look_at_rh(
+        self.view = Matrix::look_at_rh(
             &self.attr.eye.into(),
             &(self.attr.eye + self.attr.target).into(),
             &self.attr.up,
         );
+    }
+
+    fn calc_aspect_ratio(w: i32, h: i32) -> f32 {
+        w as f32 / h as f32
+    }
+
+    fn init(aspect: f32) -> Self {
+        let attr = CameraAttr::default();
+        let view = Matrix::identity();
+        let projection = Perspective::new(aspect, attr.fov * RADIAN, 0.01, 1000.0);
+
+        let mut cam = Self {
+            attr,
+            view,
+            projection,
+        };
+
+        // initial setup
+        cam.upt();
+
+        cam
     }
 }

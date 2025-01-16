@@ -1,5 +1,5 @@
 use crate::*;
-
+use sdl2::TimerSubsystem;
 use std::{
     sync::{
         atomic::{AtomicU16, Ordering},
@@ -8,8 +8,6 @@ use std::{
     thread::{sleep, spawn, JoinHandle},
     time::Duration,
 };
-
-use sdl2::TimerSubsystem;
 
 pub struct Counter(u64);
 

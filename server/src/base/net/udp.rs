@@ -1,20 +1,19 @@
 use crate::*;
-
+use crossbeam_channel::{bounded, Receiver, Sender};
 use std::{
     collections::HashSet,
     net::SocketAddr,
+    sync::atomic::AtomicBool,
     thread::{park, Thread},
     time::Duration,
 };
-
-use crossbeam_channel::{bounded, Receiver, Sender};
 
 fn handle_dist(
     s: &SyncSelect,
     udp: UdpServer,
     clients_udp: UdpClients,
     updated: Arc<Mutex<HashSet<SocketAddr>>>,
-    advance: Running,
+    advance: Arc<AtomicBool>,
     tps: Duration,
 ) -> JoinHandle<Result> {
     s.spawn(move || -> Result {
@@ -31,14 +30,16 @@ fn handle_dist(
             }
 
             // distribute updates to each player
-            for player_addr in updated.lock().drain() {
-                let player = match clients_udp.read().get(&player_addr) {
-                    Some(&player) => player,
+            for upt_addr in updated.lock().drain() {
+                // reobtain the updated object
+                let data = match clients_udp.read().get(&upt_addr) {
+                    Some(&data) => data,
                     None => continue,
                 };
 
+                // send update to each client
                 for addr in clients_udp.read().keys() {
-                    if let Err(e) = udp.send_to(&Packet::Player(player), addr) {
+                    if let Err(e) = udp.send_to(&Packet::UptObj { data }, addr) {
                         error!("{:?}", e)
                     }
                 }
@@ -58,11 +59,18 @@ fn _handle_packets(
     let input = packet.into_input()?;
 
     let mut clients = clients_udp.write();
-    let player = clients.get_mut(&addr).ok_or("Player no longer exists")?;
+    let mut obj = clients
+        .get_mut(&addr)
+        .ok_or("Object no longer exists")?
+        .player_mut()
+        .ok_or("Invalid object")?;
 
     match input {
-        Input::Mouse { xrel, yrel } => player.attr_mut().look_at(xrel, yrel),
-        Input::Keyboard { keys } => player.attr_mut().input(keys),
+        Input::Mouse(ms) => match ms {
+            Mouse::Wheel { precise_y } => obj.attr_mut().upt_fov(precise_y),
+            Mouse::Motion { xrel, yrel } => obj.attr_mut().look_at(xrel, yrel),
+        },
+        Input::Keyboard(kb) => obj.attr_mut().input(kb),
     };
     Ok(addr)
 }
@@ -72,7 +80,7 @@ fn handle_packets(
     clients_udp: UdpClients,
     receiver: Receiver<(Packet, SocketAddr)>,
     updated: Arc<Mutex<HashSet<SocketAddr>>>,
-    advance: Running,
+    advance: Arc<AtomicBool>,
     dist_thread: Thread,
 ) {
     s.spawn(move || -> Result {
@@ -97,7 +105,7 @@ fn init_write(
     tps: Duration,
 ) {
     let updated: Arc<Mutex<HashSet<SocketAddr>>> = Default::default();
-    let advance: Running = Default::default();
+    let advance: Arc<AtomicBool> = Default::default();
 
     let dist_thread = handle_dist(
         s,

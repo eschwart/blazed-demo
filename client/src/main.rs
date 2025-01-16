@@ -3,46 +3,66 @@
 mod base;
 
 use base::*;
-
+use crossbeam_channel::{bounded, Receiver, Sender};
+use glow::{HasContext, FILL, FRONT_AND_BACK, LINE};
+use sdl2::{
+    event::{Event, EventSender, WindowEvent},
+    keyboard::Keycode,
+    video::{SwapInterval, Window},
+    EventPump,
+};
 use std::{
-    collections::HashMap,
-    io::Cursor,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    thread::spawn,
+    thread::{spawn, JoinHandle},
     time::Duration,
 };
+use sync_select::*;
 
-use ::obj::{load_obj, Obj};
-use crossbeam_channel::{bounded, Receiver, Sender};
-use glow::{HasContext, Program};
-use sdl2::{
-    event::{Event, EventSender, WindowEvent},
-    keyboard::Keycode,
-    video::{FullscreenType, SwapInterval, Window},
-    EventPump,
-};
+fn handle_sync_select(s: SyncSelect, event_sender: Sender<GameEvent>) -> JoinHandle<Result> {
+    // unhandled new thread
+    spawn(move || {
+        s.join(); // wait for any thread to finish
+        error!("[SyncSelect] A thread has unexpectedly finished.");
+        event_sender.send(GameEvent::Quit).map_err(Into::into)
+    })
+}
+
+fn handle_ctrlc(s: &SyncSelect, event_sender: Sender<GameEvent>) -> Result {
+    let thread = s.thread();
+
+    ctrlc::set_handler(move || {
+        thread.unpark();
+
+        if event_sender.send(GameEvent::Quit).is_err() {
+            error!("Failed to notify event handler to quit")
+        }
+    })
+    .map_err(Into::into)
+}
 
 fn handle_game_events(s: &SyncSelect, receiver: Receiver<GameEvent>, sender: EventSender) {
     s.spawn(move || -> Result {
         while let Ok(event) = receiver.recv() {
-            _ = sender.push_custom_event(event)
+            _ = sender.push_custom_event(event);
         }
         Ok(())
     });
 }
 
-fn handle_raw_events(
+fn process_raw_events(
     gl: &GL,
-    program: Program,
-    mut window: Window,
+    programs: &Shaders,
+    window: Window,
     mut ep: EventPump,
-    (cam, players, objects, running): (Camera, Players, &mut HashMap<u8, Object>, Running),
+    (cam, objects, running): (Camera, ObjectsRef, Arc<AtomicBool>),
+    (ms_verify_sender, kb_verify_sender): (Sender<bool>, Sender<bool>),
     raw_event_sender: Sender<RawEvent>,
-    cube: Obj,
 ) -> Result {
+    let mut mode = false;
+
     for event in ep.wait_iter() {
         match event {
             Event::User { .. } => {
@@ -51,39 +71,76 @@ fn handle_raw_events(
                         GameEvent::Quit => break,
                         GameEvent::Reset => {
                             // remove and deallocate all player objects
-                            for id in players.write().drain().map(|p| p.0) {
-                                if let Some(obj) = objects.remove(&id) {
-                                    free_object(gl, &obj);
-                                }
-                            }
+                            objects.write().retain(gl, RawObjectDataUnit::Player);
                         }
-                        GameEvent::Render => {
-                            display(gl, cam.read(), objects.values(), players.read());
-                            window.gl_swap_window();
+                        GameEvent::Render(action) => {
+                            // usually window-based events
+                            if let RenderAction::AspectRatio { w, h } = action {
+                                unsafe {
+                                    gl.viewport(0, 0, w, h);
+                                }
+                                cam.write().upt_aspect_ratio(w, h);
+                            }
+                            // render a frame
+                            display(gl, &window, &cam.read(), &objects.read());
                         }
                         GameEvent::Object(action) => {
                             match action {
-                                ObjectAction::Add(player) => {
-                                    objects.insert(
-                                        player.id(),
-                                        Object::from_obj(
-                                            gl,
-                                            program,
-                                            cube.clone(),
-                                            [0.1, 0.6, 1.0, 1.0],
-                                            player.id(),
-                                        )?,
-                                    );
-                                }
-                                ObjectAction::Remove(id) => {
-                                    _ = players.write().remove(&id);
-                                    if let Some(obj) = objects.remove(&id) {
-                                        free_object(gl, &obj);
+                                ObjectAction::Add { data } => {
+                                    let mut obj =
+                                        Object::create_cube_with(gl, programs.normal(), data)?;
+
+                                    // initial transformations if player
+                                    if obj.data().player_ref().is_some() {
+                                        obj.data_mut().transform_upt();
                                     }
+
+                                    objects.write().insert(obj);
+                                }
+
+                                ObjectAction::Rem { id } => {
+                                    if let Some(obj) = objects.write().remove(id) {
+                                        free_buffers(gl, obj.buffers());
+                                    }
+                                }
+
+                                ObjectAction::Upt { data } => {
+                                    if let Some(obj_data) = objects.write().get_mut(data.id()) {
+                                        *obj_data = data;
+
+                                        // update transformations if player
+                                        if obj_data.player_ref().is_some() {
+                                            obj_data.transform_upt();
+                                        }
+                                    }
+                                }
+
+                                ObjectAction::User { data } => cam.write().replace(data.attr()),
+                            };
+                        }
+                        GameEvent::User(action) => {
+                            match action {
+                                UserAction::Input(input) => {
+                                    match input {
+                                        Input::Mouse(mouse) => match mouse {
+                                            Mouse::Wheel { precise_y } => {
+                                                cam.write().upt_fov(precise_y);
+                                                ms_verify_sender.send(true)?;
+                                            }
+                                            Mouse::Motion { xrel, yrel } => {
+                                                cam.write().look_at(xrel, yrel);
+                                                ms_verify_sender.send(true)?;
+                                            }
+                                        },
+                                        Input::Keyboard(flags) => {
+                                            cam.write().input(flags);
+                                            kb_verify_sender.send(true)?;
+                                        }
+                                    };
                                 }
                             };
                         }
-                    }
+                    };
                 }
             }
 
@@ -99,17 +156,12 @@ fn handle_raw_events(
             Event::Window {
                 win_event: WindowEvent::SizeChanged(w, h),
                 ..
-            } => {
-                unsafe {
-                    gl.viewport(0, 0, w, h);
-                }
-                raw_event_sender.send(RawEvent::AspectRatio(w, h))?
-            }
+            } => raw_event_sender.send(RawEvent::AspectRatio(w, h))?,
             Event::MouseWheel { precise_y, .. } => {
                 raw_event_sender.send(RawEvent::MouseWheel(precise_y))?
             }
             Event::MouseMotion { xrel, yrel, .. } => {
-                raw_event_sender.send(RawEvent::MouseMotion(-xrel, -yrel))?
+                raw_event_sender.send(RawEvent::MouseMotion(xrel, yrel))?
             }
             Event::KeyDown {
                 scancode: Some(key),
@@ -120,11 +172,14 @@ fn handle_raw_events(
                     _ = raw_event_sender.try_send(RawEvent::Keyboard(keys, true));
 
                     if keys.contains(Flags::RIGHT) {
-                        let cnt = match window.fullscreen_state() {
-                            FullscreenType::Off => FullscreenType::Desktop,
-                            FullscreenType::True | FullscreenType::Desktop => FullscreenType::Off,
-                        };
-                        window.set_fullscreen(cnt)?;
+                        unsafe {
+                            if mode {
+                                gl.polygon_mode(FRONT_AND_BACK, FILL);
+                            } else {
+                                gl.polygon_mode(FRONT_AND_BACK, LINE);
+                            }
+                            mode = !mode;
+                        }
                     }
                 }
             }
@@ -154,22 +209,21 @@ fn main() -> Result {
     sdl.mouse().set_relative_mouse_mode(true);
     ev.register_custom_event::<GameEvent>()?;
 
-    let program = init_shaders(&gl)?;
+    // program shaders
+    let programs = init_shaders(&gl)?;
 
-    // basic objects
-    let land: Obj =
-        load_obj(Cursor::new(include_str!("../objects/land.obj"))).map_err(Error::Obj)?;
-    let cube: Obj =
-        load_obj(Cursor::new(include_str!("../objects/cube.obj"))).map_err(Error::Obj)?;
-
+    // SDL's built-in timer subsystem
     let timer = sdl.timer()?;
 
+    // custom frames/second handler
     let mut fps_counter = FPSCounter::new(&timer);
-    fps_counter.set(144);
+    fps_counter.set(cfg.fps());
 
+    // individual frame facilitation channels
     let (fps_sender_1, fps_receiver_1) = bounded::<()>(1);
     let (fps_sender_2, fps_receiver_2) = bounded::<()>(1);
 
+    // frame verification process
     let _fps_timer_cb = || {
         // signaled to start frame
         fps_receiver_1.recv()?;
@@ -184,70 +238,91 @@ fn main() -> Result {
         Ok::<_, SyncError>(1)
     };
 
-    // handle fps
+    // construct verification callback as official timer
     let _fps_timer = timer.add_timer(
         fps_counter.delay(),
         Box::new(|| _fps_timer_cb().unwrap_or_default()),
     );
 
     // real-time user input
-    let (raw_event_sender, raw_event_receiver) = bounded::<RawEvent>(16);
-    let (event_sender, event_receiver) = bounded::<GameEvent>(16);
+    let (raw_event_sender, raw_event_receiver) = bounded::<RawEvent>(32);
+    let (event_sender, event_receiver) = bounded::<GameEvent>(32);
 
-    // container of objects
-    // TODO - impl efficient graph eventually
-    let mut objects: HashMap<u8, Object> = Default::default();
-    objects.insert(
-        0,
-        Object::from_obj(&gl, program, land, [0.6, 0.7, 0.7, 1.0], 0)?,
-    );
+    // object storage manager
+    let objects = {
+        let mut raw = RawObjects::default();
 
-    let cam: Camera = Arc::new(RwLock::new(RawCamera::init(window.size())));
-    let players: Players = Default::default();
-    let running: Running = Arc::new(AtomicBool::new(true));
+        // basic 'light' structure
+        raw.new_light(
+            &gl,
+            -128,
+            programs.simple(),
+            Vector::new(3.0, 2.0, -4.0),
+            Vector::new(0.5, 0.5, 0.5),
+            Color::new([1.0, 1.0, 0.8, 1.0], true),
+        )?;
 
+        // basic 'land' structure
+        raw.new_cube(
+            &gl,
+            -127,
+            programs.normal(),
+            Vector::new(0.0, -2.0, 0.0),
+            Vector::new(7.5, 0.1, 7.5),
+            Color::new([1.0, 0.5, 0.31, 0.9], false),
+            RawObjectDataUnit::Basic,
+        )?;
+        Objects::new(raw)
+    };
+
+    // the user's camera
+    let cam = Camera::new(window.size());
+
+    // mouse/keyboard facilitation channels
+    let (ms_verify_sender, ms_verify_receiver) = bounded::<bool>(1);
+    let (kb_verify_sender, kb_verify_receiver) = bounded::<bool>(1);
+
+    // determinant of the status of threads
+    let running: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
+
+    // short-circuiting local thread manager
     let s = SyncSelect::default();
 
+    // handle SIGINT
+    handle_ctrlc(&s, event_sender.clone())?;
+
+    // facilitate game events
     handle_game_events(&s, event_receiver, ev.event_sender());
 
+    // input & network handling
     render_loop(
         &s,
-        (cam.clone(), players.clone(), running.clone()),
+        running.clone(),
+        (kb_verify_receiver, ms_verify_receiver),
         (raw_event_receiver, event_sender.clone()),
         (fps_sender_1, fps_receiver_2),
         (fps_counter.reader(), Tps::default(), Ping::default()),
         cfg,
     );
 
-    {
-        let thread = s.thread();
-        ctrlc::set_handler(move || {
-            thread.unpark();
-            if event_sender.send(GameEvent::Quit).is_err() {
-                error!("Failed to notify event handler to quit")
-            }
-        })?;
-    }
+    // post short-circuitry handler
+    let _ss = handle_sync_select(s, event_sender);
 
-    _ = spawn(move || {
-        s.join();
-        error!("Fatal error.")
-    });
-
-    if let Err(e) = handle_raw_events(
+    // main thread
+    if let Err(e) = process_raw_events(
         &gl,
-        program,
+        &programs,
         window,
         ep,
-        (cam, players, &mut objects, running),
+        (cam, &objects, running),
+        (kb_verify_sender, ms_verify_sender),
         raw_event_sender,
-        cube,
     ) {
         error!("{}", e)
     }
 
     // clean everything up
-    clean_up(&gl, program, objects.values());
+    clean_up(&gl, programs, objects.read().iter());
 
     Ok(())
 }

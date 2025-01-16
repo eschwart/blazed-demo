@@ -1,10 +1,8 @@
 use super::*;
 use crate::*;
-
-use std::net::{SocketAddr, UdpSocket};
-
 use bincode::serialize;
 use packet_enum::{AsPacketKind, AsPacketRecv, AsPacketSend};
+use std::net::{SocketAddr, UdpSocket};
 
 #[derive(Debug)]
 pub struct UdpClient {

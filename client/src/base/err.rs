@@ -7,9 +7,6 @@ pub enum Error {
     #[error("Window: {0}")]
     Window(sdl2::video::WindowBuildError),
 
-    #[error("Obj: {0}")]
-    Obj(::obj::ObjError),
-
     #[error(transparent)]
     Blazed(BlazedError),
 }

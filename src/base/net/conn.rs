@@ -1,13 +1,11 @@
 use super::*;
 use crate::*;
-
+use bincode::serialize;
+use packet_enum::*;
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream, UdpSocket},
 };
-
-use bincode::serialize;
-use packet_enum::*;
 
 pub trait UdpConn {
     fn socket(&self) -> &UdpSocket;

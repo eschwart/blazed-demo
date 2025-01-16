@@ -1,17 +1,13 @@
-use super::*;
 use crate::*;
-
 use std::sync::atomic::AtomicU16;
 
 pub fn handle_udp(
     s: &SyncSelect,
     udp: UdpClient,
-    cam: Camera,
-    players: Players,
     render_sender: Sender<()>,
     event_sender: Sender<GameEvent>,
     tps: Tps,
-    id: u8,
+    id: Id,
 ) {
     let rate: Arc<AtomicU16> = Default::default();
     let rate_clone = rate.clone();
@@ -31,11 +27,10 @@ pub fn handle_udp(
 
         loop {
             // wait for server to send player update
-            let packet: Packet = udp.recv(&mut buf, PacketKind::Player)?;
+            let packet: Packet = udp.recv(&mut buf, PacketKind::UptObj)?;
 
-            if let Packet::Player(player) = packet {
-                // handle update
-                handle_player_update(cam.clone(), players.clone(), &event_sender, player, id)?;
+            if let Packet::UptObj { data } = packet {
+                handle_obj(id, ObjectAction::Upt { data }, &event_sender)?;
                 _ = render_sender.try_send(());
             }
             rate.fetch_add(1, Ordering::Relaxed);

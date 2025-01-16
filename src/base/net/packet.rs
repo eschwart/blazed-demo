@@ -1,19 +1,15 @@
 use crate::*;
-
-use std::fmt::Debug;
-
-use base::{cam::*, err::*};
 use packet_enum::*;
-use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ClientHandshake;
 
 #[derive(Clone, Copy, Debug)]
-pub struct ServerHandshake(u8);
+pub struct ServerHandshake(Id);
 
 impl ServerHandshake {
-    pub const fn id(&self) -> u8 {
+    pub const fn id(&self) -> Id {
         self.0
     }
 }
@@ -21,14 +17,14 @@ impl ServerHandshake {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Handshake {
     secret: [u8; 3],
-    is_client: Option<u8>,
+    is_client: Option<Id>,
 }
 
 impl Handshake {
-    // maybe generate random hash at build-time
+    // TODO - improve this (arbitrary for now)
     const SECRET: [u8; 3] = [1, 0, 1];
 
-    const fn new(is_client: Option<u8>) -> Handshake {
+    const fn new(is_client: Option<Id>) -> Handshake {
         Self {
             secret: Self::SECRET,
             is_client,
@@ -39,12 +35,12 @@ impl Handshake {
         Self::new(None)
     }
 
-    pub const fn server(id: u8) -> Handshake {
+    pub const fn server(id: Id) -> Handshake {
         Self::new(Some(id))
     }
 
-    pub fn verify(&self) -> BlazedResult<()> {
-        if self.secret == Self::SECRET {
+    pub const fn verify(&self) -> BlazedResult<()> {
+        if let Self::SECRET = self.secret {
             Ok(())
         } else {
             Err(BlazedError::Packet(PacketError::Handshake(
@@ -71,44 +67,33 @@ impl Handshake {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct Player {
-    id: u8,
-    attr: CameraAttr,
+pub enum Mouse {
+    Wheel { precise_y: f32 },
+    Motion { xrel: i32, yrel: i32 },
 }
 
-impl Player {
-    pub const fn new(id: u8) -> Self {
-        Self {
-            id,
-            attr: CameraAttr::new(),
-        }
-    }
-
-    pub const fn id(&self) -> u8 {
-        self.id
-    }
-
-    pub const fn attr(&self) -> CameraAttr {
-        self.attr
-    }
-
-    pub fn attr_mut(&mut self) -> &mut CameraAttr {
-        &mut self.attr
-    }
-}
+pub type Keybaord = Flags;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Input {
-    Mouse { xrel: i32, yrel: i32 },
-    Keyboard { keys: Flags },
+    Mouse(Mouse),
+    Keyboard(Keybaord),
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PacketEnum)]
 pub enum Packet {
-    Handshake(Handshake),
-    Input(Input),
-    Player(Player),
-    Remove(u8),
+    // initialization
+    Handshake { handshake: Handshake },
+
+    // client-related
+    Input { input: Input },
+
+    // object-related
+    AddObj { data: ObjectData },
+    RemObj { id: Id },
+    UptObj { data: ObjectData },
+
+    // misc functionality
     Flush,
     Ping,
 }
@@ -116,7 +101,7 @@ pub enum Packet {
 impl Packet {
     fn into_handshake(self) -> BlazedResult<Handshake> {
         match self {
-            Self::Handshake(handshake) => {
+            Self::Handshake { handshake } => {
                 handshake.verify()?;
                 Ok(handshake)
             }
@@ -145,19 +130,9 @@ impl Packet {
 
     pub fn into_input(self) -> BlazedResult<Input> {
         match self {
-            Self::Input(input) => Ok(input),
+            Self::Input { input } => Ok(input),
             other => Err(BlazedError::Packet(PacketError::unexpected(
                 PacketKind::Input,
-                other.kind(),
-            ))),
-        }
-    }
-
-    pub fn into_player(self) -> BlazedResult<Player> {
-        match self {
-            Self::Player(update) => Ok(update),
-            other => Err(BlazedError::Packet(PacketError::unexpected(
-                PacketKind::Player,
                 other.kind(),
             ))),
         }

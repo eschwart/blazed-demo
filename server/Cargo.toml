@@ -5,4 +5,8 @@ edition = "2021"
 
 [dependencies]
 blazed-demo = { path = ".." }
-thiserror = "2.0.3"
+clap = { workspace = true }
+crossbeam-channel = { workspace = true }
+ctrlc = { workspace = true }
+sync_select = { workspace = true }
+thiserror = { workspace = true }

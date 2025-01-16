@@ -1,22 +1,23 @@
 mod base;
 
 use base::*;
-
+use crossbeam_channel::unbounded;
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
-    sync::{
-        atomic::{AtomicU8, Ordering},
-        Arc,
-    },
+    sync::{atomic::Ordering, Arc},
     thread::{spawn, JoinHandle},
 };
+use sync_select::*;
 
-use crossbeam_channel::unbounded;
-
-pub type TcpClients = Arc<RwLock<HashMap<u8, TcpClient>>>;
-pub type UdpClients = Arc<RwLock<HashMap<SocketAddr, Player>>>;
+pub type TcpClients = Arc<RwLock<HashMap<Id, TcpClient>>>;
+pub type UdpClients = Arc<RwLock<HashMap<SocketAddr, ObjectData>>>;
 pub type Updates = Arc<Mutex<HashSet<SocketAddr>>>;
+
+fn handle_ctrlc(s: &SyncSelect) -> Result {
+    let thread = s.thread();
+    ctrlc::set_handler(move || thread.unpark()).map_err(Into::into)
+}
 
 fn main() -> Result {
     init_logger();
@@ -26,6 +27,7 @@ fn main() -> Result {
     let tcp = TcpServer::new(cfg.tcp_addr())?;
     info!("TCP @ {:?}", cfg.tcp_addr());
 
+    // init UDP server
     let udp = UdpServer::new(cfg.udp_addr())?;
     let udp_clone = udp.try_clone()?;
     info!("UDP @ {:?}", cfg.udp_addr());
@@ -37,21 +39,19 @@ fn main() -> Result {
     let clients_udp: UdpClients = Default::default();
 
     // share client UDP sockets between main thread and 'alive' thread
-    // TODO => 'heartbeat' for bi-direction
     let (sender_addr, receiver_addr) = unbounded::<SocketAddr>();
 
     // share client TCP packets
     let (sender_packet, receiver_packet) = unbounded::<Packet>();
 
-    // monotonic user identity
-    let id = Arc::new(AtomicU8::new(1));
+    // monotonic user identity (default: 0)
+    let id = Default::default();
 
+    // short-circuiting local thread manager
     let s = SyncSelect::default();
 
-    {
-        let thread = s.thread();
-        ctrlc::set_handler(move || thread.unpark())?;
-    }
+    // handle SIGINT
+    handle_ctrlc(&s)?;
 
     // handle TCP packets
     init_tcp(

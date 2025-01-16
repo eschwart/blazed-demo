@@ -1,17 +1,13 @@
-use super::*;
 use crate::*;
-
 use std::time::Instant;
 
 pub fn handle_tcp(
     s: &SyncSelect,
     tcp: TcpClient,
-    cam: Camera,
-    players: Players,
     render_sender: Sender<()>,
     event_sender: Sender<GameEvent>,
     ping: Ping,
-    id: u8,
+    id: Id,
 ) {
     let rate: Arc<RwLock<Duration>> = Default::default();
     let rate_clone = rate.clone();
@@ -40,17 +36,18 @@ pub fn handle_tcp(
             // wait for response
             match tcp.recv(
                 &mut buf,
-                PacketKind::Player | PacketKind::Remove | PacketKind::Ping,
+                PacketKind::AddObj | PacketKind::RemObj | PacketKind::Ping,
             )? {
-                Packet::Player(player) => {
-                    handle_player_update(cam.clone(), players.clone(), &event_sender, player, id)?;
+                Packet::AddObj { data } => {
+                    handle_obj(id, ObjectAction::Add { data }, &event_sender)?;
                     _ = render_sender.try_send(());
                 }
 
-                Packet::Remove(id) => {
-                    event_sender.send(GameEvent::Object(ObjectAction::Remove(id)))?;
+                Packet::RemObj { id } => {
+                    handle_obj(id, ObjectAction::Rem { id }, &event_sender)?;
                     _ = render_sender.try_send(());
                 }
+
                 Packet::Ping => (),
                 _ => unreachable!(),
             }

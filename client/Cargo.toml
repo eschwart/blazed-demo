@@ -5,9 +5,13 @@ edition = "2021"
 
 [dependencies]
 blazed-demo = { path = ".." }
-bytemuck = "1.19.0"
-egui_glow = "0.29.1"
-glow = "0.15.0"
-obj-rs = { version = "0.7.4", features = ["vulkano"] }
+bytemuck = { version = "1.21.0", features = ["derive"] }
+clap = { workspace = true }
+crossbeam-channel = { workspace = true }
+ctrlc = { workspace = true }
+enum-unit = "0.1.4"
+glow = "0.16.0"
+pfrs = "0.1.2"
 sdl2 = { version = "0.37.0", features = ["bundled", "static-link"] }
-thiserror = "2.0.3"
+sync_select = { workspace = true }
+thiserror = { workspace = true }

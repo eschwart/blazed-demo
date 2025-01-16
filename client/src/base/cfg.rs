@@ -1,28 +1,44 @@
-use crate::{clap::Parser, *};
-
+use crate::*;
+use clap::Parser;
 use std::net::SocketAddr;
 
-#[derive(Parser, Clone, Copy, Debug)]
-pub struct ServerConfig {
+#[derive(Parser, Debug)]
+pub struct Config {
+    /// Specify the FPS.
+    #[arg(long, default_value_t = 60)]
+    fps: u16,
+
+    /// Do not attempt to connect to server.
+    #[arg(long, default_value_t)]
+    offline: bool,
+
     /// Remote TCP IP address
-    #[arg(alias = "rt", long)]
+    #[arg(alias = "rt", long, default_value_t = get_socket_addr(TCP_PORT))]
     remote_tcp_addr: SocketAddr,
 
-    /// Local IP address
+    /// Local UDP IP address (optional)
     #[arg(alias = "lu", long)]
-    local_udp_addr: SocketAddr,
+    local_udp_addr: Option<SocketAddr>,
 
-    /// Remote IP address
-    #[arg(alias = "ru", long)]
+    /// Remote UDP IP address
+    #[arg(alias = "ru", long, default_value_t = get_socket_addr(UDP_PORT))]
     remote_udp_addr: SocketAddr,
 }
 
-impl ServerConfig {
+impl Config {
+    pub const fn fps(&self) -> u16 {
+        self.fps
+    }
+
+    pub const fn is_online(&self) -> bool {
+        !self.offline
+    }
+
     pub const fn remote_tcp_addr(&self) -> SocketAddr {
         self.remote_tcp_addr
     }
 
-    pub const fn local_udp_addr(&self) -> SocketAddr {
+    pub const fn local_udp_addr(&self) -> Option<SocketAddr> {
         self.local_udp_addr
     }
 
@@ -31,29 +47,8 @@ impl ServerConfig {
     }
 }
 
-#[derive(Parser, Debug)]
-pub struct Config {
-    #[command(subcommand)]
-    cmd: Option<Subcommand>,
-}
-
-impl Config {
-    pub const fn server(&self) -> Option<ServerConfig> {
-        if let Some(Subcommand::Server(cfg)) = self.cmd {
-            Some(cfg)
-        } else {
-            None
-        }
-    }
-}
-
 impl Default for Config {
     fn default() -> Self {
         Self::parse()
     }
-}
-
-#[derive(Parser, Debug)]
-enum Subcommand {
-    Server(ServerConfig),
 }

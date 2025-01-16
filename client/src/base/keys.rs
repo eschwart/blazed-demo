@@ -1,5 +1,4 @@
 use crate::*;
-
 use sdl2::keyboard::Scancode;
 
 pub const fn from_scancode(key: Scancode) -> Flags {

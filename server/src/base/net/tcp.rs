@@ -1,12 +1,11 @@
 use crate::*;
-
 use crossbeam_channel::{Receiver, Sender};
 
 fn handshake(
     tcp: &TcpClient,
     clients_udp: UdpClients,
     receiver_addr: &Receiver<SocketAddr>,
-    id: u8,
+    id: Id,
 ) -> Result<SocketAddr> {
     debug!("TCP [ ][1] Receiving handshake");
     let mut buf = [0; PACKET_SIZE];
@@ -15,14 +14,16 @@ fn handshake(
 
     // reply with server handshake
     debug!("TCP [ ][2] Sending handshake");
-    tcp.send(&Packet::Handshake(Handshake::server(id)))?;
+    tcp.send(&Packet::Handshake {
+        handshake: Handshake::server(id),
+    })?;
 
     debug!("TCP [3][5] Waiting for UDP address");
     let addr = receiver_addr.recv()?;
 
     debug!("TCP [ ][6] Sending gamestates");
-    for &player in clients_udp.read().values() {
-        tcp.send(&Packet::Player(player))?;
+    for &data in clients_udp.read().values() {
+        tcp.send(&Packet::AddObj { data })?;
     }
     debug!("TCP [ ][7] Finishing");
     tcp.send(&Packet::Flush)?;
@@ -38,7 +39,7 @@ fn _handle_alive(tcp: &TcpClient) -> Result<()> {
         tcp.recv::<_, Packet, PACKET_SIZE>(&mut buf, PacketKind::Ping)?;
         tcp.send(&Packet::Ping)?;
 
-        spinner.sleep(PING_DELAY);
+        spinner.sleep(PING_MINIMUM);
     }
 }
 
@@ -61,7 +62,7 @@ fn handle_alive(
             clients_tcp.write().remove(&id);
 
             // send packet to TCP channel
-            sender.send(Packet::Remove(id))?
+            sender.send(Packet::RemObj { id })?
         }
         Ok(())
     })
@@ -69,10 +70,10 @@ fn handle_alive(
 
 fn handle_dist(s: &SyncSelect, clients_tcp: TcpClients, receiver_packet: Receiver<Packet>) {
     s.spawn(move || -> Result {
-        // distribute updates
         loop {
             let packet = receiver_packet.recv()?;
 
+            // distribute updates
             for tcp in clients_tcp.read().values() {
                 tcp.send(&packet)?;
             }
@@ -85,9 +86,9 @@ fn handle_incoming(
     tcp_listener: TcpServer,
     clients_tcp: TcpClients,
     clients_udp: UdpClients,
-    sender_client: Sender<Packet>,
+    sender_packet: Sender<Packet>,
     receiver_addr: Receiver<SocketAddr>,
-    id: Arc<AtomicU8>,
+    id: Arc<AtomicId>,
 ) {
     s.spawn(move || -> Result {
         for tcp in tcp_listener.incoming() {
@@ -110,24 +111,28 @@ fn handle_incoming(
                     // increment if handshake was successful
                     let id = id.fetch_add(1, Ordering::Relaxed);
 
-                    // contruct client's player
-                    let player = Player::new(id);
+                    // contruct client's initial object data
+                    let data = ObjectData::new(
+                        id,
+                        Color::new([0.1, 0.6, 1.0, 1.0], false),
+                        RawObjectData::Player(PlayerData::new(Vector::zeros())),
+                    );
 
                     // add client stream to TCP table
                     clients_tcp.write().insert(id, tcp_clone);
 
                     // add player data to UDP table
-                    clients_udp.write().insert(addr, player);
+                    clients_udp.write().insert(addr, data);
 
                     // player joined
-                    sender_client.send(Packet::Player(player))?;
+                    sender_packet.send(Packet::AddObj { data })?;
 
                     _ = handle_alive(
                         tcp,
                         addr,
                         clients_tcp.clone(),
                         clients_udp.clone(),
-                        sender_client.clone(),
+                        sender_packet.clone(),
                     );
                 }
                 Err(e) => error!("[handle_incoming] {:?}", e),
@@ -145,7 +150,7 @@ pub fn init_tcp(
     sender_packet: Sender<Packet>,
     receiver_addr: Receiver<SocketAddr>,
     receiver_packet: Receiver<Packet>,
-    id: Arc<AtomicU8>,
+    id: Arc<AtomicId>,
 ) {
     s.spawn_with(move |s| -> Result {
         handle_incoming(
