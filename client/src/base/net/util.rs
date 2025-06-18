@@ -1,42 +1,45 @@
 use crate::*;
 use crossbeam_channel::{Receiver, Sender};
 use pfrs::*;
-
 use std::{net::Ipv4Addr, thread::sleep};
 
+/// obtain player identity and gamestates from server
 pub fn handshake(
     tcp: &TcpClient,
     udp: &mut UdpClient,
     event_sender: &Sender<GameEvent>,
 ) -> Result<Id> {
-    debug!("[TCP] [][1] Sending client handshake");
-    tcp.send(&Packet::Handshake {
-        handshake: Handshake::client(),
-    })?;
+    debug!("[TCP] [1] Sending client handshake");
+    tcp.send(&ClientHandshake::serialize())?;
 
-    // widely used packet buffer
     let mut buf = [0; PACKET_SIZE];
 
-    debug!("[TCP] [][2] Receiving server handshake");
-    let id = tcp
-        .recv::<PacketKind, Packet, PACKET_SIZE>(&mut buf, PacketKind::Handshake)?
-        .into_server_handshake()?
-        .id();
+    debug!("[TCP] [2] Receiving server handshake");
+    let n = tcp.recv(&mut buf)?;
+    assert!(n != 0);
 
-    debug!("[UDP] [][3] Sending client handshake");
-    udp.send(&Packet::Handshake {
-        handshake: Handshake::client(),
-    })?;
+    if buf[0] != ServerHandshake::ID {
+        return Err(format!("[TCP] [4] Found {}, expected ServerHandshake", buf[0]).into());
+    }
+    let id = ServerHandshake::deserialize(&buf[1..n]).id();
 
-    debug!("[TCP] [][4] Receiving gamestates");
-    while let Ok(packet) = tcp.recv(&mut buf, PacketKind::AddObj | PacketKind::Flush) {
-        match packet {
-            Packet::AddObj { data } => handle_obj(id, ObjectAction::Add { data }, &event_sender)?,
-            Packet::Flush => break,
+    debug!("[UDP] [3] Sending client handshake");
+    udp.send(&ClientHandshake::serialize())?;
+
+    debug!("[TCP] [4] Receiving game states");
+    while let Ok(n) = tcp.recv(&mut buf) {
+        assert!(n != 0);
+
+        match buf[0] {
+            Flush::ID => break,
+            UptObj::ID => {
+                let data = UptObj::deserialize(&buf[1..n]);
+                event_sender.send(GameEvent::Object(ObjectAction::Add { data }))?;
+            }
             _ => unreachable!(),
         }
     }
-    debug!("[TCP] [][5] Finishing");
+    debug!("[TCP] [5] Finishing");
 
     // initial rendering
     event_sender.send(GameEvent::Render(RenderAction::Flush))?;
@@ -44,31 +47,25 @@ pub fn handshake(
     Ok(id)
 }
 
-fn map_obj_event(user_id: Id, action: ObjectAction) -> Result<GameEvent> {
-    let game_event = match action {
-        ObjectAction::Add { data } | ObjectAction::Upt { data } => (data.id() == user_id)
-            .then_some({
-                let data = data.player().ok_or("Expected 'Player' object type")?.data();
-                GameEvent::Object(ObjectAction::User { data })
-            }),
+/// send channeled user-input to UDP socket
+pub fn handle_input(s: &SyncSelect, mut udp: UdpClient, input_receiver: Receiver<Vec<u8>>) {
+    s.spawn(move || -> Result<()> {
+        udp.socket().set_write_timeout(Some(GAME_SPEED))?;
 
-        ObjectAction::Rem { id } => (id == user_id).then_some(GameEvent::Reset),
-        _ => unreachable!(),
-    }
-    .unwrap_or(GameEvent::Object(action));
-    Ok(game_event)
+        // repeatedly send user input to server
+        while let Ok(data) = input_receiver.recv() {
+            udp.send(data.as_slice())?;
+        }
+        Err(BlazedError::Infallible.into())
+    });
 }
 
-pub fn handle_obj(user_id: Id, action: ObjectAction, event_sender: &Sender<GameEvent>) -> Result {
-    let game_event = map_obj_event(user_id, action)?;
-    event_sender.send(game_event).map_err(Into::into)
-}
-
+/// establish client-server handshake then initialize TCP/UDP threads and input thread
 pub fn handle_conn(
-    input_receiver: Receiver<Input>,
+    input_receiver: Receiver<Vec<u8>>,
     render_sender: Sender<()>,
     event_sender: Sender<GameEvent>,
-    (tps, ping): (Tps, Ping),
+    (tps, ping): (RawTps, RawPing),
     cfg: &Config,
 ) -> Result<()> {
     // establish connection
@@ -80,10 +77,9 @@ pub fn handle_conn(
         find_open_port(Ipv4Addr::LOCALHOST, Protocol::Udp).ok_or("No available dynamic ports")?,
     ));
     let mut udp = UdpClient::new(local_udp_addr, cfg.remote_udp_addr())?;
-    let udp_clone = udp.try_clone()?;
 
+    // packet buffer for this client
     let id = handshake(&tcp, &mut udp, &event_sender)?;
-    debug!("Handshake complete");
 
     let s = SyncSelect::default();
 
@@ -98,7 +94,14 @@ pub fn handle_conn(
     );
 
     // handle outgoing UDP packets
-    handle_udp(&s, udp_clone, render_sender.clone(), event_sender, tps, id);
+    handle_udp(
+        &s,
+        udp.clone(),
+        render_sender.clone(),
+        event_sender,
+        tps,
+        id,
+    );
 
     // handle mouse and keyboard input
     handle_input(&s, udp, input_receiver);
@@ -108,10 +111,10 @@ pub fn handle_conn(
 
 pub fn init_conn(
     s: &SyncSelect,
-    input_receiver: Receiver<Input>,
+    input_receiver: Receiver<Vec<u8>>,
     render_sender: Sender<()>,
     event_sender: Sender<GameEvent>,
-    stats: (Tps, Ping),
+    stats: (RawTps, RawPing),
     cfg: Config,
 ) {
     s.spawn(move || -> Result {
@@ -136,17 +139,5 @@ pub fn init_conn(
             // reconnect timeout
             sleep(SECOND);
         }
-    });
-}
-
-pub fn handle_input(s: &SyncSelect, mut udp: UdpClient, input_receiver: Receiver<Input>) {
-    s.spawn(move || -> Result<()> {
-        udp.socket().set_write_timeout(Some(TICK_RATE))?;
-
-        // repeatedly send user input to server
-        while let Ok(input) = input_receiver.recv() {
-            udp.send(&Packet::Input { input })?;
-        }
-        Err(BlazedError::Infallible.into())
     });
 }

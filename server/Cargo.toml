@@ -1,12 +1,15 @@
 [package]
 name = "server"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 blazed-demo = { path = ".." }
 clap = { workspace = true }
 crossbeam-channel = { workspace = true }
 ctrlc = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
 sync_select = { workspace = true }
 thiserror = { workspace = true }
+ultraviolet = { workspace = true }

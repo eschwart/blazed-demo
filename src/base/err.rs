@@ -1,7 +1,5 @@
 use crate::*;
-
 use crossbeam_channel::{RecvError, SendError, TryRecvError, TrySendError};
-use packet_enum::AsPacketKind;
 use strum::Display;
 
 pub type BlazedResult<T = (), E = BlazedError> = std::result::Result<T, E>;
@@ -18,17 +16,8 @@ pub enum PacketError {
     #[error("Handshake({0})")]
     Handshake(#[from] HandshakeError),
 
-    #[error("Expected {lhs:?}, found {rhs:?}")]
+    #[error("Expected {lhs}, found {rhs}")]
     Unexpected { lhs: String, rhs: String },
-}
-
-impl PacketError {
-    pub fn unexpected<K: AsPacketKind>(lhs: K, rhs: K) -> Self {
-        Self::Unexpected {
-            lhs: format!("{:?}", lhs),
-            rhs: format!("{:?}", rhs),
-        }
-    }
 }
 
 #[derive(thiserror::Error, Debug, Display)]
@@ -78,10 +67,10 @@ pub enum BlazedError {
     Io(#[from] std::io::Error),
 
     #[error(transparent)]
-    Signal(#[from] ctrlc::Error),
+    Parse(#[from] core::num::ParseIntError),
 
     #[error(transparent)]
-    Json(#[from] Box<bincode::ErrorKind>),
+    Signal(#[from] ctrlc::Error),
 
     #[error(transparent)]
     Packet(#[from] PacketError),

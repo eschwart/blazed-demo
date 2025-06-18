@@ -1,24 +1,20 @@
-mod atom;
 mod cam;
 mod err;
-mod keys;
+mod flags;
 mod net;
+mod obj;
+mod threading;
 mod util;
 
-pub use atom::*;
 pub use cam::*;
 pub use err::*;
-pub use keys::*;
+pub use flags::*;
 pub use net::*;
+pub use obj::*;
+pub use threading::*;
 pub use util::*;
 
 pub use crossbeam_utils::Backoff;
 pub use log::{debug, error, info, trace, warn};
 pub use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
-pub use serde::{Deserialize, Serialize};
 pub use spin_sleep::SpinSleeper;
-
-pub fn init_logger() {
-    std::env::set_var("RUST_LOG", "trace");
-    env_logger::init();
-}

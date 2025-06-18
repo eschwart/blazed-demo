@@ -5,8 +5,8 @@ use std::net::SocketAddr;
 #[derive(Parser, Debug)]
 pub struct Config {
     /// Specify the FPS.
-    #[arg(long, default_value_t = 60)]
-    fps: u16,
+    #[arg(long, default_value_t = 120)]
+    fps: u8,
 
     /// Do not attempt to connect to server.
     #[arg(long, default_value_t)]
@@ -15,18 +15,16 @@ pub struct Config {
     /// Remote TCP IP address
     #[arg(alias = "rt", long, default_value_t = get_socket_addr(TCP_PORT))]
     remote_tcp_addr: SocketAddr,
-
     /// Local UDP IP address (optional)
     #[arg(alias = "lu", long)]
     local_udp_addr: Option<SocketAddr>,
-
     /// Remote UDP IP address
     #[arg(alias = "ru", long, default_value_t = get_socket_addr(UDP_PORT))]
     remote_udp_addr: SocketAddr,
 }
 
 impl Config {
-    pub const fn fps(&self) -> u16 {
+    pub const fn fps(&self) -> u8 {
         self.fps
     }
 

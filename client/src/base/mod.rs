@@ -18,23 +18,38 @@ pub use util::*;
 
 pub use blazed_demo::*;
 
+use atomic_enum::*;
 use std::{
     ops::Deref,
-    sync::{atomic::AtomicU16, Arc},
+    sync::{Arc, atomic::AtomicU16},
     time::Duration,
 };
 
-/// An thread-safe read-write locked [`std::sync::atomic::AtomicU16`].
-pub type Tps = Arc<AtomicU16>;
+/// A thread-safe read-write locked [`std::time::Duration`].
+pub type RawRate = Arc<RwLock<Duration>>;
 
-/// An thread-safe read-write locked [`blazed_demo::Flags`].
-pub type Keys = Arc<RwLock<Flags>>;
+/// A thread-safe read-write locked [`std::sync::atomic::AtomicU16`].
+pub type RawTps = Arc<AtomicU16>;
 
-/// An thread-safe read-write locked [`std::time::Duration`].
-pub type Ping = Arc<RwLock<Duration>>;
+// /// A thread-safe read-write locked [`blazed_demo::RawKeys`].
+// pub type RawKeys = Arc<Keys>;
+
+/// A thread-safe read-write locked [`std::time::Duration`].
+pub type RawPing = Arc<RwLock<Duration>>;
 
 /// A reference to a read-only locked [`RawObjects`].
 pub type ObjectsRef<'a> = &'a RwLock<RawObjects>;
+
+/// A thread-safe [`RawRenderState`].
+pub type RenderState = Arc<AtomicRenderStateKind>;
+
+/// Current state of the rendering thread.
+#[atomic_enum]
+pub enum RenderStateKind {
+    Pass,
+    Reload,
+    Quit,
+}
 
 /// A convenience wrapper for a read-write locked [`RawObjects`].
 #[derive(Clone, Debug)]
@@ -58,7 +73,7 @@ impl Deref for Objects {
 }
 
 /// A convenience wrapper for a read-write locked [`RawCamera`].
-/// #[derive(Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Camera {
     inner: Arc<RwLock<RawCamera>>,
 }
@@ -86,28 +101,31 @@ pub enum RenderAction {
 }
 
 /// Events related to objects.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum ObjectAction {
-    Add { data: ObjectData },
-    Rem { id: Id },
-    Upt { data: ObjectData },
-    User { data: PlayerData },
+    Add { data: UptObj },
+    Upt { data: UptObjOpt },
+    Remove { id: Id },
+    User { data: UptObjOpt },
 }
 
 /// Event wrappers related to the user.
 #[derive(Clone, Copy, Debug)]
 pub enum UserAction {
-    Input(Input),
+    Keyboard(Keys),
+    Wheel(Wheel),
+    Motion(Motion),
 }
 
 /// Event wrappers related to the game.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum GameEvent {
     Quit,
     Reset,
     Render(RenderAction),
     Object(ObjectAction),
     User(UserAction),
+    Fps(u8),
 }
 
 /// Event wrappers related to the backend.
@@ -116,6 +134,6 @@ pub enum RawEvent {
     Quit,
     MouseWheel(f32),
     MouseMotion(i32, i32),
-    Keyboard(Flags, bool),
+    Keyboard(Keys, bool),
     AspectRatio(i32, i32),
 }

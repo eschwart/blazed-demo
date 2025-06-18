@@ -1,25 +1,26 @@
 use crate::*;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::{
+    net::{SocketAddr, TcpListener, TcpStream},
+    ops::Deref,
+    sync::Arc,
+};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TcpClient {
-    inner: TcpStream,
+    inner: Arc<TcpStream>,
 }
 
 impl TcpClient {
     pub fn new(addr: SocketAddr) -> BlazedResult<Self> {
-        let inner = TcpStream::connect(addr)?;
-        Ok(Self { inner })
-    }
-
-    pub fn try_clone(&self) -> BlazedResult<Self> {
-        let inner = self.inner.try_clone()?;
+        let inner = Arc::new(TcpStream::connect(addr)?);
         Ok(Self { inner })
     }
 }
 
-impl TcpConn for TcpClient {
-    fn stream(&self) -> &TcpStream {
+impl Deref for TcpClient {
+    type Target = TcpStream;
+
+    fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
@@ -37,7 +38,8 @@ impl TcpServer {
 
     pub fn incoming(&self) -> impl Iterator<Item = TcpClient> + '_ {
         self.inner.incoming().filter_map(|s| {
-            if let Ok(inner) = s {
+            if let Ok(stream) = s {
+                let inner = Arc::new(stream);
                 Some(TcpClient { inner })
             } else {
                 None

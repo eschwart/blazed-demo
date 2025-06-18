@@ -1,68 +1,90 @@
 use crate::*;
 use crossbeam_channel::{Receiver, Sender};
+use std::time::Instant;
+use ultraviolet::Vec3;
 
 fn handshake(
-    tcp: &TcpClient,
+    tcp: TcpClient,
     clients_udp: UdpClients,
     receiver_addr: &Receiver<SocketAddr>,
     id: Id,
 ) -> Result<SocketAddr> {
-    debug!("TCP [ ][1] Receiving handshake");
-    let mut buf = [0; PACKET_SIZE];
-    tcp.recv::<PacketKind, Packet, PACKET_SIZE>(&mut buf, PacketKind::Handshake)?
-        .into_client_handshake()?;
+    let mut buf = [0; 1];
+
+    // receive initial client handshake packet
+    debug!("[TCP] [1] Receiving client handshake");
+    tcp.recv(&mut buf)?;
+    if buf[0] != ClientHandshake::ID {
+        return Err(format!("Found {}, expected ClientHandshake.", buf[0]).into());
+    }
 
     // reply with server handshake
-    debug!("TCP [ ][2] Sending handshake");
-    tcp.send(&Packet::Handshake {
-        handshake: Handshake::server(id),
-    })?;
+    debug!("[TCP] [2] Sending server handshake");
+    tcp.send(&ServerHandshake::new(id).serialize())?;
 
-    debug!("TCP [3][5] Waiting for UDP address");
+    // receive UDP address from UDP thread [handle_incoming]
+    debug!("[TCP] [3] Waiting for UDP address");
     let addr = receiver_addr.recv()?;
 
-    debug!("TCP [ ][6] Sending gamestates");
+    // send game states to client
+    debug!("[TCP] [6] Sending game states");
     for &data in clients_udp.read().values() {
-        tcp.send(&Packet::AddObj { data })?;
+        tcp.send(&data.serialize())?
     }
-    debug!("TCP [ ][7] Finishing");
-    tcp.send(&Packet::Flush)?;
+
+    // end the handshake
+    debug!("[TCP] [7] Finishing");
+    tcp.send(&Flush::serialize())?;
 
     Ok(addr)
 }
 
-fn _handle_alive(tcp: &TcpClient) -> Result<()> {
-    let mut buf = [0; PACKET_SIZE];
-    let spinner = SpinSleeper::default();
+fn _handle_alive(tcp: TcpClient) -> Result<()> {
+    let mut buf = [0; 1];
+    let spin = SpinSleeper::default();
 
     loop {
-        tcp.recv::<_, Packet, PACKET_SIZE>(&mut buf, PacketKind::Ping)?;
-        tcp.send(&Packet::Ping)?;
+        let t = Instant::now();
 
-        spinner.sleep(PING_MINIMUM);
+        // ping client
+        tcp.send(&Ping::serialize())?;
+
+        // wait for response
+        tcp.recv(&mut buf)?;
+
+        // enforce minimum ping
+        let elapsed = t.elapsed();
+        if elapsed < PING_MINIMUM {
+            let diff = PING_MINIMUM - elapsed;
+            spin.sleep(diff);
+        }
     }
 }
 
 fn handle_alive(
     tcp: TcpClient,
-    addr: SocketAddr,
+    [addr_tcp, addr_udp]: [SocketAddr; 2],
     clients_tcp: TcpClients,
     clients_udp: UdpClients,
     sender: Sender<Packet>,
 ) -> JoinHandle<Result> {
     spawn(move || {
-        if let Err(e) = _handle_alive(&tcp) {
-            warn!("{:?}", e)
+        if let Err(Error::Blazed(BlazedError::Io(e))) = _handle_alive(tcp) {
+            if let std::io::ErrorKind::ConnectionReset = e.kind() {
+                info!("{} has left", addr_tcp)
+            } else {
+                warn!("{}", e)
+            }
         }
 
-        if let Some(user) = clients_udp.write().remove(&addr) {
-            let id = user.id();
+        if let Some(user) = clients_udp.write().remove(&addr_udp) {
+            let id = user.id;
 
             // remove client before send packet to TCP channel
             clients_tcp.write().remove(&id);
 
             // send packet to TCP channel
-            sender.send(Packet::RemObj { id })?
+            sender.send(RemObj { id }.serialize().to_vec())?
         }
         Ok(())
     })
@@ -88,48 +110,58 @@ fn handle_incoming(
     clients_udp: UdpClients,
     sender_packet: Sender<Packet>,
     receiver_addr: Receiver<SocketAddr>,
+    updates: Updates,
     id: Arc<AtomicId>,
 ) {
     s.spawn(move || -> Result {
         for tcp in tcp_listener.incoming() {
-            let tcp_clone = if let Ok(clone) = tcp.try_clone() {
-                clone
-            } else {
-                debug!("Failed to clone {:?}", tcp.stream());
-                continue;
-            };
+            // the client's tcp address
+            let addr_tcp = tcp.peer_addr()?;
+            info!("{} attempting to join", addr_tcp);
 
+            // init handshake process
             match handshake(
-                &tcp,
+                tcp.clone(),
                 clients_udp.clone(),
                 &receiver_addr,
                 id.load(Ordering::Relaxed),
             ) {
-                Ok(addr) => {
-                    debug!("TCP [ ][8] Handshake complete");
+                Ok(addr_udp) => {
+                    info!("{} has joined", addr_tcp);
 
                     // increment if handshake was successful
                     let id = id.fetch_add(1, Ordering::Relaxed);
 
                     // contruct client's initial object data
-                    let data = ObjectData::new(
+                    let data = UptObj {
                         id,
-                        Color::new([0.1, 0.6, 1.0, 1.0], false),
-                        RawObjectData::Player(PlayerData::new(Vector::zeros())),
+                        kind: ObjType::Player,
+                        dim: Vec3::new(1.0, 1.0, 1.0),
+                        color: Color::new([0.1, 0.6, 1.0, 1.0], false),
+                        ..Default::default()
+                    };
+
+                    // initialize object update structure
+                    updates.lock().insert(
+                        addr_udp,
+                        UptObjOpt {
+                            id,
+                            ..Default::default()
+                        },
                     );
 
                     // add client stream to TCP table
-                    clients_tcp.write().insert(id, tcp_clone);
+                    clients_tcp.write().insert(id, tcp.clone());
 
                     // add player data to UDP table
-                    clients_udp.write().insert(addr, data);
+                    clients_udp.write().insert(addr_udp, data);
 
                     // player joined
-                    sender_packet.send(Packet::AddObj { data })?;
+                    sender_packet.send(data.serialize().to_vec())?;
 
-                    _ = handle_alive(
+                    let _alive = handle_alive(
                         tcp,
-                        addr,
+                        [addr_tcp, addr_udp],
                         clients_tcp.clone(),
                         clients_udp.clone(),
                         sender_packet.clone(),
@@ -150,6 +182,7 @@ pub fn init_tcp(
     sender_packet: Sender<Packet>,
     receiver_addr: Receiver<SocketAddr>,
     receiver_packet: Receiver<Packet>,
+    updates: Updates,
     id: Arc<AtomicId>,
 ) {
     s.spawn_with(move |s| -> Result {
@@ -160,6 +193,7 @@ pub fn init_tcp(
             clients_udp,
             sender_packet,
             receiver_addr,
+            updates,
             id,
         );
 

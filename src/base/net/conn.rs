@@ -1,45 +1,42 @@
-use super::*;
 use crate::*;
-use bincode::serialize;
-use packet_enum::*;
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream, UdpSocket},
+    ops::Deref,
 };
 
 pub trait UdpConn {
     fn socket(&self) -> &UdpSocket;
 
-    fn send_to(&self, packet: &impl AsPacketSend, addr: &SocketAddr) -> BlazedResult<usize> {
-        let bytes = serialize(packet)?;
-        self.socket().send_to(&bytes, addr).map_err(Into::into)
+    fn send_to(&self, buf: &[u8], addr: &SocketAddr) -> BlazedResult<usize> {
+        self.socket().send_to(buf, addr).map_err(Into::into)
     }
 
-    fn recv_from<'a, K: AsPacketKind, T: AsPacketRecv<'a, K>>(
-        &self,
-        buf: &'a mut [u8],
-        kind: K,
-    ) -> BlazedResult<(T, SocketAddr)> {
-        let (n, addr) = self.socket().recv_from(buf)?;
-        let packet = recv(&buf[..n], kind)?;
-        Ok((packet, addr))
+    fn recv_from(&self, buf: &mut [u8]) -> BlazedResult<(usize, SocketAddr)> {
+        self.socket().recv_from(buf).map_err(Into::into)
+    }
+}
+
+impl<T: Deref<Target = UdpSocket>> UdpConn for T {
+    fn socket(&self) -> &UdpSocket {
+        self
     }
 }
 
 pub trait TcpConn {
     fn stream(&self) -> &TcpStream;
 
-    fn send(&self, packet: &impl AsPacketSend) -> BlazedResult<()> {
-        let bytes = serialize(packet)?;
-        self.stream().write_all(&bytes).map_err(Into::into)
+    fn send(&self, buf: &[u8]) -> BlazedResult {
+        self.stream().write_all(buf).map_err(Into::into)
     }
 
-    fn recv<'a, K: AsPacketKind, T: AsPacketRecv<'a, K>, const N: usize>(
-        &self,
-        buf: &'a mut [u8; N],
-        kind: K,
-    ) -> BlazedResult<T> {
-        let bytes = self.stream().read(buf)?;
-        recv(&buf[..bytes], kind)
+    fn recv(&self, buf: &mut [u8]) -> BlazedResult<usize> {
+        self.stream().read(buf).map_err(Into::into)
+    }
+}
+
+impl<T: Deref<Target = TcpStream>> TcpConn for T {
+    fn stream(&self) -> &TcpStream {
+        self
     }
 }

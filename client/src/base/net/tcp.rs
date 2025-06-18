@@ -1,58 +1,85 @@
 use crate::*;
 use std::time::Instant;
 
+fn ping_handler(s: &SyncSelect, ping: RawPing, rate: Arc<RwLock<Duration>>) {
+    s.spawn(move || {
+        let spin = SpinSleeper::default();
+
+        loop {
+            spin.sleep(SECOND);
+            let value = *rate.read();
+            *rate.write() = Duration::ZERO;
+            *ping.write() = value;
+        }
+    });
+}
+
 pub fn handle_tcp(
     s: &SyncSelect,
     tcp: TcpClient,
     render_sender: Sender<()>,
     event_sender: Sender<GameEvent>,
-    ping: Ping,
+    ping: RawPing,
     id: Id,
 ) {
-    let rate: Arc<RwLock<Duration>> = Default::default();
-    let rate_clone = rate.clone();
+    let rate: RawRate = Default::default();
 
-    s.spawn(move || -> Result {
-        let spinner = SpinSleeper::default();
-
-        loop {
-            spinner.sleep(SECOND);
-            let rate = *rate_clone.read();
-            *rate_clone.write() = Duration::default();
-            *ping.write() = rate;
-        }
-    });
+    ping_handler(s, ping, rate.clone());
 
     s.spawn(move || -> Result {
         let mut buf = [0; PACKET_SIZE];
 
         loop {
             // init timer
-            let time = Instant::now();
-
-            // ping to server
-            tcp.send(&Packet::Ping)?;
+            let t = Instant::now();
 
             // wait for response
-            match tcp.recv(
-                &mut buf,
-                PacketKind::AddObj | PacketKind::RemObj | PacketKind::Ping,
-            )? {
-                Packet::AddObj { data } => {
-                    handle_obj(id, ObjectAction::Add { data }, &event_sender)?;
+            let n = tcp.recv(&mut buf)?;
+            let bytes = &buf[1..n];
+
+            match buf[0] {
+                Ping::ID => tcp.send(&Ping::serialize())?,
+
+                RemObj::ID => {
+                    let data = RemObj::deserialize(bytes);
+                    event_sender.send(GameEvent::Object(ObjectAction::Remove { id: data.id }))?;
+                    _ = render_sender.try_send(());
+                }
+                UptObj::ID => {
+                    let data = UptObj::deserialize(bytes);
+
+                    let action = if id == data.id {
+                        let cam_opt = CameraAttrOpt {
+                            fov: Some(data.cam.fov),
+                            speed: Some(data.cam.speed),
+                            yaw: Some(data.cam.yaw),
+                            pitch: Some(data.cam.pitch),
+                            eye: Some(data.cam.eye),
+                            target: Some(data.cam.target),
+                            up: Some(data.cam.up),
+                        };
+
+                        let data = UptObjOpt {
+                            id,
+                            kind: Some(data.kind),
+                            dim: Some(data.dim),
+                            color: Some(data.color),
+                            cam: cam_opt,
+                            keys: data.keys,
+                        };
+                        ObjectAction::User { data }
+                    } else {
+                        ObjectAction::Add { data }
+                    };
+                    event_sender.send(GameEvent::Object(action))?;
                     _ = render_sender.try_send(());
                 }
 
-                Packet::RemObj { id } => {
-                    handle_obj(id, ObjectAction::Rem { id }, &event_sender)?;
-                    _ = render_sender.try_send(());
-                }
-
-                Packet::Ping => (),
-                _ => unreachable!(),
+                _ => (),
             }
+
             // update ping nonetheless
-            *rate.write() = time.elapsed()
+            *rate.write() = t.elapsed();
         }
     });
 }

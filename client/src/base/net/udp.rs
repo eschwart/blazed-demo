@@ -6,7 +6,7 @@ pub fn handle_udp(
     udp: UdpClient,
     render_sender: Sender<()>,
     event_sender: Sender<GameEvent>,
-    tps: Tps,
+    tps: RawTps,
     id: Id,
 ) {
     let rate: Arc<AtomicU16> = Default::default();
@@ -24,15 +24,26 @@ pub fn handle_udp(
 
     s.spawn(move || -> Result {
         let mut buf = [0; PACKET_SIZE];
-
         loop {
-            // wait for server to send player update
-            let packet: Packet = udp.recv(&mut buf, PacketKind::UptObj)?;
+            let n = udp.recv(&mut buf)?;
+            let bytes = &buf[1..n];
 
-            if let Packet::UptObj { data } = packet {
-                handle_obj(id, ObjectAction::Upt { data }, &event_sender)?;
-                _ = render_sender.try_send(());
+            match buf[0] {
+                UptObjOpt::ID => {
+                    let data = UptObjOpt::deserialize(bytes);
+
+                    let action = if id == data.id {
+                        ObjectAction::User { data }
+                    } else {
+                        ObjectAction::Upt { data }
+                    };
+                    event_sender.send(GameEvent::Object(action))?;
+                    _ = render_sender.try_send(());
+                }
+                _ => (),
             }
+
+            // increment TPS
             rate.fetch_add(1, Ordering::Relaxed);
         }
     });

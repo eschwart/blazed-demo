@@ -8,7 +8,17 @@ A client-server 3D renderer featuring real-time player movement and view synchro
 - basic lighting (ambient + diffuse + specular)
 - back-face culling
 
-## Build
+## Todo
+- Improve documentation (severely).
+- Fix server implementation
+  - The server tends to fall apart with 3+ connections.
+- Implement client-side server interpolation.
+- Implement culling techniques (frustrum & occlusion)
+- Implement instanced-based rendering.
+- Implement [AABB](https://developer.mozilla.org/en-US/docs/Games/Techniques/3D_collision_detection)-based collision.
+  - Maybe try [kiddo](https://crates.io/crates/kiddo).
+
+## Development
 Retrieve the repository:
 ```bash
 git clone https://github.com/splurf/blazed-demo
@@ -31,7 +41,7 @@ cargo r --release --manifest-path server\Cargo.toml
 Usage: client.exe [OPTIONS]
 
 Options:
-      --fps <FPS>                          Specify the FPS [default: 60]
+      --fps <FPS>                          Specify the FPS [default: 120]
       --offline                            Do not attempt to connect to server
       --remote-tcp-addr <REMOTE_TCP_ADDR>  Remote TCP IP address [default: 127.0.0.1:54269]
       --local-udp-addr <LOCAL_UDP_ADDR>    Local UDP IP address (optional)
@@ -49,17 +59,3 @@ Options:
       --tps <TPS>            Server ticks/sec [default: 128]
   -h, --help                 Print help
 ```
-
-## Todo
-- Improve documentation (severely).
-- Fix server implementation
-  - The server tends to fall apart with 3+ connections.
-- Reduce CPU usage moving or looking around.
-- Implement client-side server interpolation.
-- Fix event-handling between mouse/keyboard.
-  - Scrollwheel events (zooming in/out) get mitigated while looking around.
-- Implement culling techniques (frustrum & occlusion)
-- Implement instanced-based rendering.
-- Implement [AABB](https://developer.mozilla.org/en-US/docs/Games/Techniques/3D_collision_detection)-based collision. Maybe try a 3D grid-like partition.
-- Optimized method of storing and sorting opaque/transparent objects.
-- so much more.. taking a break for awhile.

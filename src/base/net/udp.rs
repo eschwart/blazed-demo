@@ -1,67 +1,56 @@
-use super::*;
 use crate::*;
-use bincode::serialize;
-use packet_enum::{AsPacketKind, AsPacketRecv, AsPacketSend};
-use std::net::{SocketAddr, UdpSocket};
+use std::{
+    net::{SocketAddr, UdpSocket},
+    ops::Deref,
+    sync::Arc,
+};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UdpClient {
-    inner: UdpSocket,
+    inner: Arc<UdpSocket>,
 }
 
 impl UdpClient {
     pub fn new(local_addr: SocketAddr, remote_addr: SocketAddr) -> BlazedResult<Self> {
         let inner = UdpSocket::bind(local_addr)?;
         inner.connect(remote_addr)?;
+        let inner = Arc::new(inner);
         Ok(Self { inner })
     }
 
-    pub fn send(&mut self, packet: &impl AsPacketSend) -> BlazedResult<usize> {
-        let bytes = serialize(packet)?;
-        let n = self.inner.send(&bytes)?;
-        Ok(n)
+    pub fn send(&mut self, buf: &[u8]) -> BlazedResult {
+        self.inner.send(buf).map(|_| ()).map_err(Into::into)
     }
 
-    pub fn recv<'a, K: AsPacketKind, T: AsPacketRecv<'a, K>>(
-        &self,
-        buf: &'a mut [u8],
-        kind: K,
-    ) -> BlazedResult<T> {
-        let n = self.inner.recv(buf)?;
-        recv(&buf[..n], kind)
-    }
-
-    pub fn try_clone(&self) -> BlazedResult<Self> {
-        let inner = self.inner.try_clone()?;
-        Ok(Self { inner })
+    pub fn recv(&self, buf: &mut [u8]) -> BlazedResult<usize> {
+        self.inner.recv(buf).map_err(Into::into)
     }
 }
 
-impl UdpConn for UdpClient {
-    fn socket(&self) -> &UdpSocket {
+impl Deref for UdpClient {
+    type Target = UdpSocket;
+
+    fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UdpServer {
-    inner: UdpSocket,
+    inner: Arc<UdpSocket>,
 }
 
 impl UdpServer {
     pub fn new(addr: SocketAddr) -> BlazedResult<Self> {
-        let inner = UdpSocket::bind(addr)?;
-        Ok(Self { inner })
-    }
-
-    pub fn try_clone(&self) -> BlazedResult<Self> {
-        let inner = self.inner.try_clone()?;
+        let inner = Arc::new(UdpSocket::bind(addr)?);
         Ok(Self { inner })
     }
 }
 
-impl UdpConn for UdpServer {
-    fn socket(&self) -> &UdpSocket {
+impl Deref for UdpServer {
+    type Target = UdpSocket;
+
+    fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }

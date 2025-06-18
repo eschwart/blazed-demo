@@ -3,23 +3,21 @@
 mod base;
 
 use base::*;
-use crossbeam_channel::{bounded, Receiver, Sender};
-use glow::{HasContext, FILL, FRONT_AND_BACK, LINE};
+use crossbeam_channel::{Receiver, Sender, bounded};
+use glow::{FILL, FRONT_AND_BACK, HasContext, LINE};
 use sdl2::{
+    EventPump, TimerSubsystem,
     event::{Event, EventSender, WindowEvent},
     keyboard::Keycode,
     video::{SwapInterval, Window},
-    EventPump,
 };
 use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    thread::{spawn, JoinHandle},
+    sync::{Arc, atomic::Ordering},
+    thread::{JoinHandle, spawn},
     time::Duration,
 };
 use sync_select::*;
+use ultraviolet::Vec3;
 
 fn handle_sync_select(s: SyncSelect, event_sender: Sender<GameEvent>) -> JoinHandle<Result> {
     // unhandled new thread
@@ -56,9 +54,9 @@ fn process_raw_events(
     gl: &GL,
     programs: &Shaders,
     window: Window,
+    timer_fps_cfg: &mut impl FnMut(u8) -> u8,
     mut ep: EventPump,
-    (cam, objects, running): (Camera, ObjectsRef, Arc<AtomicBool>),
-    (ms_verify_sender, kb_verify_sender): (Sender<bool>, Sender<bool>),
+    (cam, objects, state): (Camera, ObjectsRef, RenderState),
     raw_event_sender: Sender<RawEvent>,
 ) -> Result {
     let mut mode = false;
@@ -71,7 +69,7 @@ fn process_raw_events(
                         GameEvent::Quit => break,
                         GameEvent::Reset => {
                             // remove and deallocate all player objects
-                            objects.write().retain(gl, RawObjectDataUnit::Player);
+                            objects.write().retain(gl, ObjType::Player);
                         }
                         GameEvent::Render(action) => {
                             // usually window-based events
@@ -91,54 +89,58 @@ fn process_raw_events(
                                         Object::create_cube_with(gl, programs.normal(), data)?;
 
                                     // initial transformations if player
-                                    if obj.data().player_ref().is_some() {
-                                        obj.data_mut().transform_upt();
-                                    }
+                                    obj.transform_upt();
 
                                     objects.write().insert(obj);
                                 }
-
-                                ObjectAction::Rem { id } => {
+                                ObjectAction::Remove { id } => {
                                     if let Some(obj) = objects.write().remove(id) {
                                         free_buffers(gl, obj.buffers());
                                     }
                                 }
-
-                                ObjectAction::Upt { data } => {
-                                    if let Some(obj_data) = objects.write().get_mut(data.id()) {
-                                        *obj_data = data;
-
-                                        // update transformations if player
-                                        if obj_data.player_ref().is_some() {
-                                            obj_data.transform_upt();
+                                ObjectAction::Upt { mut data } => {
+                                    if let Some(obj) = objects.write().get_mut(data.id) {
+                                        if data.cam.is_modified() {
+                                            obj.cam.patch(&mut data.cam);
                                         }
+                                        if let Some(dim) = data.dim {
+                                            obj.dim = dim
+                                        }
+                                        obj.transform_upt();
+                                    } else {
+                                        error!("Object {} doesn't exist.", data.id)
                                     }
                                 }
-
-                                ObjectAction::User { data } => cam.write().replace(data.attr()),
+                                ObjectAction::User { mut data } => {
+                                    if data.cam.is_modified() {
+                                        let mut cam = cam.write();
+                                        cam.attr_mut().patch(&mut data.cam);
+                                        cam.upt();
+                                    }
+                                }
                             };
                         }
                         GameEvent::User(action) => {
                             match action {
-                                UserAction::Input(input) => {
-                                    match input {
-                                        Input::Mouse(mouse) => match mouse {
-                                            Mouse::Wheel { precise_y } => {
-                                                cam.write().upt_fov(precise_y);
-                                                ms_verify_sender.send(true)?;
-                                            }
-                                            Mouse::Motion { xrel, yrel } => {
-                                                cam.write().look_at(xrel, yrel);
-                                                ms_verify_sender.send(true)?;
-                                            }
-                                        },
-                                        Input::Keyboard(flags) => {
-                                            cam.write().input(flags);
-                                            kb_verify_sender.send(true)?;
-                                        }
-                                    };
+                                UserAction::Keyboard(kb) => cam.write().input(kb),
+                                UserAction::Wheel(Wheel { precise_y }) => {
+                                    cam.write().upt_fov(precise_y)
+                                }
+                                UserAction::Motion(Motion { xrel, yrel }) => {
+                                    cam.write().look_at(xrel, yrel)
                                 }
                             };
+                        }
+                        // set a new fps target
+                        GameEvent::Fps(fps) => {
+                            // old and new rendering states
+                            let old_state = timer_fps_cfg(fps) == 0;
+                            let new_state = fps == 0;
+
+                            // only reload the rendering state if fps mode is changed
+                            if old_state != new_state {
+                                state.store(RenderStateKind::Reload, Ordering::Relaxed);
+                            }
                         }
                     };
                 }
@@ -149,7 +151,7 @@ fn process_raw_events(
                 keycode: Some(Keycode::Escape),
                 ..
             } => {
-                running.store(false, Ordering::Release);
+                state.store(RenderStateKind::Quit, Ordering::Release);
                 raw_event_sender.send(RawEvent::Quit)?;
                 break;
             }
@@ -171,7 +173,7 @@ fn process_raw_events(
                 if let Some(keys) = try_from_scancode(key) {
                     _ = raw_event_sender.try_send(RawEvent::Keyboard(keys, true));
 
-                    if keys.contains(Flags::RIGHT) {
+                    if keys.contains(Keys::RIGHT) {
                         unsafe {
                             if mode {
                                 gl.polygon_mode(FRONT_AND_BACK, FILL);
@@ -200,11 +202,11 @@ fn process_raw_events(
 }
 
 fn main() -> Result {
-    init_logger();
+    env_logger::init();
     let cfg = Config::default();
 
     // init sdl and config
-    let (sdl, video, gl, window, ev, ep, _ctx) = init()?;
+    let (sdl, video, timer, gl, window, ev, ep, _ctx) = init()?;
     video.gl_set_swap_interval(SwapInterval::Immediate)?;
     sdl.mouse().set_relative_mouse_mode(true);
     ev.register_custom_event::<GameEvent>()?;
@@ -212,37 +214,77 @@ fn main() -> Result {
     // program shaders
     let programs = init_shaders(&gl)?;
 
-    // SDL's built-in timer subsystem
-    let timer = sdl.timer()?;
-
+    ///////////////////////////////////////////////////////////////////////////////////////////
     // custom frames/second handler
-    let mut fps_counter = FPSCounter::new(&timer);
-    fps_counter.set(cfg.fps());
+    let (spin, limit, fps): (SpinSleeper, Limit, RawFps) = Default::default();
+    let freq = timer.performance_frequency() as f32;
+
+    // reset the fps counter every second
+    let fps_clone = fps.clone();
+    let _reset = spawn(move || {
+        loop {
+            spin.sleep(SECOND);
+            fps_clone.reset();
+        }
+    });
 
     // individual frame facilitation channels
     let (fps_sender_1, fps_receiver_1) = bounded::<()>(1);
     let (fps_sender_2, fps_receiver_2) = bounded::<()>(1);
 
     // frame verification process
-    let _fps_timer_cb = || {
+    let fps_clone = fps.clone();
+    let limit_clone = limit.clone();
+    let fps_timer_cb = || {
         // signaled to start frame
         fps_receiver_1.recv()?;
-        let start = fps_counter.start(&timer);
+        let start = timer.performance_counter();
 
         // signaled to stop frame
         fps_receiver_1.recv()?;
-        fps_counter.stop(&timer, start);
 
+        {
+            let end = timer.performance_counter();
+
+            let elapsed_sec = (end - start) as f32 / freq;
+            let elapsed_dur = Duration::from_secs_f32(elapsed_sec);
+
+            let limit = limit_clone.get();
+            if elapsed_dur < limit {
+                let dif = limit - elapsed_dur;
+                spin.sleep(dif)
+            }
+            fps_clone.incr();
+        }
         // signal to continue
         fps_sender_2.send(())?;
+
         Ok::<_, SyncError>(1)
     };
 
-    // construct verification callback as official timer
-    let _fps_timer = timer.add_timer(
-        fps_counter.delay(),
-        Box::new(|| _fps_timer_cb().unwrap_or_default()),
-    );
+    // construct callback as official timer
+    let mut timer_fps = None;
+
+    // constructs/deconstructs the timer callback
+    let fps_clone = fps.clone();
+    let mut timer_fps_cfg = |fps: u8| -> u8 {
+        limit.set(fps);
+        let prev = fps_clone.swap_target(fps);
+
+        timer_fps = if fps > 0 {
+            Some(timer.add_timer(
+                limit.get().as_millis() as u32,
+                Box::new(|| fps_timer_cb().unwrap_or_default()),
+            ))
+        } else {
+            None
+        };
+        prev
+    };
+
+    // initial timer config
+    timer_fps_cfg(cfg.fps());
+    ///////////////////////////////////////////////////////////////////////////////////////////
 
     // real-time user input
     let (raw_event_sender, raw_event_receiver) = bounded::<RawEvent>(32);
@@ -255,35 +297,33 @@ fn main() -> Result {
         // basic 'light' structure
         raw.new_light(
             &gl,
-            -128,
             programs.simple(),
-            Vector::new(3.0, 2.0, -4.0),
-            Vector::new(0.5, 0.5, 0.5),
+            -128,
+            ObjType::Basic,
+            Vec3::new(3.0, 2.0, -4.0),
+            Vec3::new(0.5, 0.5, 0.5),
             Color::new([1.0, 1.0, 0.8, 1.0], true),
         )?;
 
         // basic 'land' structure
         raw.new_cube(
             &gl,
-            -127,
             programs.normal(),
-            Vector::new(0.0, -2.0, 0.0),
-            Vector::new(7.5, 0.1, 7.5),
+            -127,
+            ObjType::Basic,
+            Vec3::new(0.0, -2.0, 0.0),
+            Vec3::new(7.5, 0.1, 7.5),
             Color::new([1.0, 0.5, 0.31, 0.9], false),
-            RawObjectDataUnit::Basic,
         )?;
+
         Objects::new(raw)
     };
 
     // the user's camera
     let cam = Camera::new(window.size());
 
-    // mouse/keyboard facilitation channels
-    let (ms_verify_sender, ms_verify_receiver) = bounded::<bool>(1);
-    let (kb_verify_sender, kb_verify_receiver) = bounded::<bool>(1);
-
     // determinant of the status of threads
-    let running: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
+    let state: RenderState = Arc::new(AtomicRenderStateKind::new(RenderStateKind::Pass));
 
     // short-circuiting local thread manager
     let s = SyncSelect::default();
@@ -297,11 +337,10 @@ fn main() -> Result {
     // input & network handling
     render_loop(
         &s,
-        running.clone(),
-        (kb_verify_receiver, ms_verify_receiver),
+        state.clone(),
         (raw_event_receiver, event_sender.clone()),
         (fps_sender_1, fps_receiver_2),
-        (fps_counter.reader(), Tps::default(), Ping::default()),
+        (fps, RawTps::default(), RawPing::default()),
         cfg,
     );
 
@@ -313,9 +352,9 @@ fn main() -> Result {
         &gl,
         &programs,
         window,
+        &mut timer_fps_cfg,
         ep,
-        (cam, &objects, running),
-        (kb_verify_sender, ms_verify_sender),
+        (cam, &objects, state),
         raw_event_sender,
     ) {
         error!("{}", e)

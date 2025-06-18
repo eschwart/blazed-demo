@@ -1,10 +1,11 @@
 use crate::*;
-use clap::{value_parser, Parser};
-use std::time::Duration;
+use clap::Parser;
+use std::{num::ParseIntError, time::Duration};
 
 /// Calculates the duration of a single tick.
-fn calc_tps(tps: u16) -> Duration {
-    Duration::from_secs_f32((1000.0 / tps as f32) / 1000.0)
+fn parse_tps(s: &str) -> Result<Duration, ParseIntError> {
+    s.parse::<u64>()
+        .map(|tps| Duration::from_secs_f32(1.0 / tps as f32))
 }
 
 #[derive(Parser, Debug)]
@@ -18,8 +19,8 @@ pub struct Config {
     udp_addr: SocketAddr,
 
     /// Server ticks/sec
-    #[arg(long, default_value_t = 128, value_parser = value_parser!(u16).range(1..1024))]
-    tps: u16,
+    #[arg(long, default_value = "128", value_parser = parse_tps)]
+    tps: Duration,
 }
 
 impl Config {
@@ -31,8 +32,8 @@ impl Config {
         self.udp_addr
     }
 
-    pub fn tps(&self) -> Duration {
-        calc_tps(self.tps)
+    pub const fn tps(&self) -> Duration {
+        self.tps
     }
 }
 

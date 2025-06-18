@@ -1,12 +1,12 @@
 use crate::*;
 use enum_unit::*;
 use glow::{
-    Context, HasContext, NativeProgram, BLEND, CULL_FACE, DEPTH_TEST, FRAGMENT_SHADER, LESS,
+    BLEND, CULL_FACE, Context, DEPTH_TEST, FRAGMENT_SHADER, HasContext, LESS, NativeProgram,
     ONE_MINUS_SRC_ALPHA, SRC_ALPHA, VERTEX_SHADER,
 };
 use sdl2::{
-    video::{GLContext, Window},
     EventPump, EventSubsystem, Sdl, VideoSubsystem,
+    video::{GLContext, Window},
 };
 
 #[derive(Clone, Copy, Debug, EnumUnit)]
@@ -138,6 +138,7 @@ pub fn init_shaders(gl: &Context) -> Result<Shaders> {
 pub fn init() -> Result<(
     Sdl,
     VideoSubsystem,
+    TimerSubsystem,
     GL,
     Window,
     EventSubsystem,
@@ -146,6 +147,7 @@ pub fn init() -> Result<(
 )> {
     let sdl = sdl2::init()?;
     let video = sdl.video()?;
+    let timer = sdl.timer()?;
 
     let gl_attr = video.gl_attr();
     gl_attr.set_context_profile(sdl2::video::GLProfile::Core);
@@ -191,7 +193,9 @@ pub fn init() -> Result<(
         gl.blend_func(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
     }
 
-    Ok((sdl, video, gl, window, events, event_pump, gl_context))
+    Ok((
+        sdl, video, timer, gl, window, events, event_pump, gl_context,
+    ))
 }
 
 pub fn free_buffers(gl: &Context, buffers: Buffers) {

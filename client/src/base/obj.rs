@@ -1,14 +1,15 @@
 use crate::*;
-use bytemuck::{cast_slice, NoUninit};
+use bytemuck::{NoUninit, cast_slice};
 use glow::{
-    Context, HasContext, NativeBuffer, NativeVertexArray, ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER,
-    FLOAT, STATIC_DRAW, TRIANGLES, TRIANGLE_STRIP, UNSIGNED_BYTE,
+    ARRAY_BUFFER, Context, ELEMENT_ARRAY_BUFFER, FLOAT, HasContext, NativeBuffer,
+    NativeVertexArray, STATIC_DRAW, TRIANGLE_STRIP, TRIANGLES, UNSIGNED_BYTE,
 };
 use std::{
     collections::HashMap,
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
+use ultraviolet::{Mat4, Vec3};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Buffers {
@@ -35,21 +36,25 @@ impl Buffers {
 pub struct Object {
     program: Program,
     buffers: Buffers,
-    data: ObjectData,
     mode: u32,
     element_type: u32,
     len: i32,
+    data: UptObj,
+    tran: Transformations,
 }
 
 impl Object {
-    const fn new(
+    fn new(
         program: Program,
         buffers: Buffers,
         mode: u32,
         element_type: u32,
         len: i32,
-        data: ObjectData,
+        data: UptObj,
     ) -> Self {
+        let mut tran = Transformations::new(data.cam.eye, data.dim);
+        tran.model_upt(); // initial transformation
+
         Self {
             program,
             buffers,
@@ -57,7 +62,35 @@ impl Object {
             mode,
             element_type,
             len,
+            tran,
         }
+    }
+
+    pub fn tran(&self) -> &Transformations {
+        &self.tran
+    }
+
+    pub fn tran_mut(&mut self) -> &mut Transformations {
+        &mut self.tran
+    }
+
+    pub fn translation_upt(&mut self, pos: Vec3) {
+        self.tran.translation = Mat4::from_translation(pos)
+    }
+
+    pub fn rotation_upt(&mut self, pitch: f32, yaw: f32) {
+        self.tran.rotation = Mat4::from_euler_angles(0.0, pitch, yaw)
+    }
+
+    pub fn transform_upt(&mut self) {
+        self.translation_upt(self.cam.eye);
+
+        let yaw = self.cam.yaw;
+        let pitch = self.cam.pitch;
+
+        self.rotation_upt(pitch.radians(), -yaw.radians());
+        self.tran.scale_upt(self.dim);
+        self.tran.model_upt();
     }
 
     /// Construct a simple cube (8 vertices; 14 indices).
@@ -66,25 +99,31 @@ impl Object {
     pub fn create_flat_cube(
         gl: &Context,
         program: Program,
-        pos: Vector,
-        dim: Vector,
-        color: Color,
         id: Id,
-        kind: RawObjectDataUnit,
+        kind: ObjType,
+        pos: Vec3,
+        dim: Vec3,
+        color: Color,
     ) -> Result<Self> {
-        let raw_data = match kind {
-            RawObjectDataUnit::Player => RawObjectData::Player(PlayerData::new(pos)),
-            RawObjectDataUnit::Basic => RawObjectData::Basic(BasicData::new(pos, dim)),
-        };
-        let data = ObjectData::new(id, color, raw_data);
-
-        Self::create_flat_cube_with(gl, program, data)
+        let cam = CameraAttr::new(pos);
+        Self::create_flat_cube_with(
+            gl,
+            program,
+            UptObj {
+                id,
+                kind,
+                dim,
+                color,
+                cam,
+                ..Default::default()
+            },
+        )
     }
 
     /// Construct a simple cube (8 vertices; 14 indices) with specified [`ObjectData`].
     ///
     /// Explanation: https://stackoverflow.com/a/79336923/13449866
-    pub fn create_flat_cube_with(gl: &Context, program: Program, data: ObjectData) -> Result<Self> {
+    pub fn create_flat_cube_with(gl: &Context, program: Program, data: UptObj) -> Result<Self> {
         let x = -1.0;
         let y = -1.0;
         let z = -1.0;
@@ -128,28 +167,33 @@ impl Object {
     pub fn create_cube(
         gl: &Context,
         program: Program,
-        pos: Vector,
-        dim: Vector,
-        color: Color,
         id: Id,
-        kind: RawObjectDataUnit,
+        kind: ObjType,
+        pos: Vec3,
+        dim: Vec3,
+        color: Color,
     ) -> Result<Self> {
-        let raw_data = match kind {
-            RawObjectDataUnit::Player => RawObjectData::Player(PlayerData::new(pos)),
-            RawObjectDataUnit::Basic => RawObjectData::Basic(BasicData::new(pos, dim)),
+        let cam = CameraAttr::new(pos);
+        let data = UptObj {
+            id,
+            kind,
+            dim,
+            color,
+            cam,
+            ..Default::default()
         };
-        let data = ObjectData::new(id, color, raw_data);
 
         match program.kind() {
             ProgramUnit::Simple => Self::create_flat_cube_with(gl, program, data),
             ProgramUnit::Normal => Self::create_cube_with(gl, program, data),
+            _ => unreachable!(),
         }
     }
 
     /// Construct a normal cube (24 vertices; 36 indices) with specified [`ObjectData`].
     ///
     /// Explanation: https://stackoverflow.com/a/79337030/13449866
-    pub fn create_cube_with(gl: &Context, program: Program, data: ObjectData) -> Result<Self> {
+    pub fn create_cube_with(gl: &Context, program: Program, data: UptObj) -> Result<Self> {
         let x = -1.0;
         let y = -1.0;
         let z = -1.0;
@@ -237,7 +281,7 @@ impl Object {
         indices: &[I],
         mode: u32,
         element_type: u32,
-        mut data: ObjectData,
+        data: UptObj,
         has_norms: bool,
     ) -> Result<Self> {
         unsafe {
@@ -286,9 +330,6 @@ impl Object {
 
             let buf = Buffers { vao, vbo, ebo };
 
-            // initial transformation update
-            data.model_upt();
-
             Ok(Self::new(
                 program,
                 buf,
@@ -308,11 +349,11 @@ impl Object {
         self.buffers
     }
 
-    pub const fn data(&self) -> &ObjectData {
+    pub const fn data(&self) -> &UptObj {
         &self.data
     }
 
-    pub fn data_mut(&mut self) -> &mut ObjectData {
+    pub fn data_mut(&mut self) -> &mut UptObj {
         &mut self.data
     }
 
@@ -329,11 +370,11 @@ impl Object {
     }
 
     pub const fn id(&self) -> Id {
-        self.data.id()
+        self.data.id
     }
 
-    pub const fn color(&self) -> &[f32] {
-        self.data.color()
+    pub const fn color(&self) -> [f32; 4] {
+        self.data.color.data()
     }
 
     pub const fn mode(&self) -> u32 {
@@ -350,7 +391,7 @@ impl Object {
 }
 
 impl Deref for Object {
-    type Target = ObjectData;
+    type Target = UptObj;
 
     fn deref(&self) -> &Self::Target {
         &self.data
@@ -373,32 +414,35 @@ impl RawObjects {
     pub fn new_cube(
         &mut self,
         gl: &Context,
-        id: Id,
         program: Program,
-        pos: Vector,
-        dim: Vector,
+        id: Id,
+        kind: ObjType,
+        pos: Vec3,
+        dim: Vec3,
         color: Color,
-        kind: RawObjectDataUnit,
     ) -> Result {
-        let raw_data = match kind {
-            RawObjectDataUnit::Player => RawObjectData::Player(PlayerData::new(pos)),
-            RawObjectDataUnit::Basic => RawObjectData::Basic(BasicData::new(pos, dim)),
+        let cam = CameraAttr::new(pos);
+        let data = UptObj {
+            id,
+            kind,
+            dim,
+            color,
+            cam,
+            ..Default::default()
         };
-        let data = ObjectData::new(id, color, raw_data);
-
         self.new_cube_with(gl, program, data)
     }
 
     /// create and add a new cube with specified [`ObjectData`].
-    pub fn new_cube_with(&mut self, gl: &Context, program: Program, data: ObjectData) -> Result {
+    pub fn new_cube_with(&mut self, gl: &Context, program: Program, data: UptObj) -> Result {
         let obj = Object::create_cube_with(gl, program, data)?;
-        self.opaque.insert(data.id(), obj);
+        self.opaque.insert(data.id, obj);
         Ok(())
     }
 
     /// return a mutable reference of the specified object.
-    pub fn get_mut(&mut self, id: Id) -> Option<&mut ObjectData> {
-        self.opaque.get_mut(&id).map(Object::data_mut)
+    pub fn get_mut(&mut self, id: Id) -> Option<&mut Object> {
+        self.opaque.get_mut(&id)
     }
 
     /// insert a new object.
@@ -410,14 +454,14 @@ impl RawObjects {
     pub fn new_light(
         &mut self,
         gl: &Context,
-        id: Id,
         program: Program,
-        pos: Vector,
-        dim: Vector,
+        id: Id,
+        kind: ObjType,
+        pos: Vec3,
+        dim: Vec3,
         color: Color,
     ) -> Result {
-        let obj =
-            Object::create_flat_cube(gl, program, pos, dim, color, id, RawObjectDataUnit::Basic)?;
+        let obj = Object::create_flat_cube(gl, program, id, kind, pos, dim, color)?;
         self.opaque.insert(id, obj);
         Ok(())
     }
@@ -428,9 +472,9 @@ impl RawObjects {
     }
 
     /// retain only the objects specified by object type.
-    pub fn retain(&mut self, gl: &Context, kind: RawObjectDataUnit) {
+    pub fn retain(&mut self, gl: &Context, kind: ObjType) {
         self.opaque.retain(|_, obj| {
-            if kind == obj.kind() {
+            if kind == obj.kind {
                 free_buffers(gl, obj.buffers());
                 false
             } else {
@@ -441,12 +485,20 @@ impl RawObjects {
 
     /// return an iterator of every light object
     pub fn lights(&self) -> impl Iterator<Item = &Object> {
-        self.opaque.values().filter(|o| o.is_light())
+        self.opaque.values().filter(|o| o.color.is_emit())
     }
 
     /// return an iterator of every object in descending order,
     /// based on the alpha value color of each object.
+    pub fn opaque(&self) -> impl Iterator<Item = &Object> {
+        self.opaque.values().filter(|o| !o.color.is_emit())
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &Object> {
         self.opaque.values()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Object> {
+        self.opaque.values_mut()
     }
 }

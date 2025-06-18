@@ -1,17 +1,22 @@
 [package]
 name = "client"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
+atomic_enum = "0.3.0"
+bitflags = { workspace = true }
 blazed-demo = { path = ".." }
-bytemuck = { version = "1.21.0", features = ["derive"] }
+bytemuck = { workspace = true }
 clap = { workspace = true }
 crossbeam-channel = { workspace = true }
 ctrlc = { workspace = true }
-enum-unit = "0.1.4"
+enum-unit = { workspace = true }
+env_logger = { workspace = true }
 glow = "0.16.0"
+log = { workspace = true }
 pfrs = "0.1.2"
 sdl2 = { version = "0.37.0", features = ["bundled", "static-link"] }
 sync_select = { workspace = true }
 thiserror = { workspace = true }
+ultraviolet = { workspace = true }

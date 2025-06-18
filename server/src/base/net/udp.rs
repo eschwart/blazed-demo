@@ -1,95 +1,160 @@
 use crate::*;
-use crossbeam_channel::{bounded, Receiver, Sender};
-use std::{
-    collections::HashSet,
-    net::SocketAddr,
-    sync::atomic::AtomicBool,
-    thread::{park, Thread},
-    time::Duration,
-};
+use crossbeam_channel::{Receiver, Sender, bounded};
+use std::{net::SocketAddr, time::Duration};
 
-fn handle_dist(
+fn game_handler(
     s: &SyncSelect,
-    udp: UdpServer,
+    waiter_game: Waiter,
     clients_udp: UdpClients,
-    updated: Arc<Mutex<HashSet<SocketAddr>>>,
-    advance: Arc<AtomicBool>,
-    tps: Duration,
+    updates: Updates,
 ) -> JoinHandle<Result> {
-    s.spawn(move || -> Result {
-        let (spinner, backoff): (SpinSleeper, Backoff) = Default::default();
+    s.spawn(move || {
+        let spinner: SpinSleeper = Default::default();
+        let setter_game = waiter_game.setter();
 
         loop {
-            spinner.sleep(tps);
-            while !advance.load(Ordering::SeqCst) {
-                if backoff.is_completed() {
-                    park();
-                } else {
-                    backoff.snooze();
-                }
-            }
+            waiter_game.wait();
 
-            // distribute updates to each player
-            for upt_addr in updated.lock().drain() {
-                // reobtain the updated object
-                let data = match clients_udp.read().get(&upt_addr) {
-                    Some(&data) => data,
-                    None => continue,
-                };
-
-                // send update to each client
-                for addr in clients_udp.read().keys() {
-                    if let Err(e) = udp.send_to(&Packet::UptObj { data }, addr) {
-                        error!("{:?}", e)
+            // begin game updates
+            loop {
+                let mut is_idle = true;
+                for (addr, client) in clients_udp.write().iter_mut() {
+                    if !client.keys.is_empty() {
+                        client.cam.input(client.keys);
+                        updates.lock().get_mut(addr).unwrap().cam.eye = Some(client.cam.eye);
+                        is_idle = false;
                     }
                 }
+                if is_idle {
+                    setter_game.set_ready();
+                    break;
+                }
+
+                // respect game speed
+                spinner.sleep(GAME_SPEED);
             }
-            backoff.reset();
-            advance.store(false, Ordering::Release);
+            waiter_game.reset();
         }
     })
 }
 
-fn _handle_packets(
-    clients_udp: &UdpClients,
-    receiver: &Receiver<(Packet, SocketAddr)>,
-) -> Result<SocketAddr> {
-    let (packet, addr) = receiver.recv()?;
+fn handle_dist(
+    s: &SyncSelect,
+    waiter_dist: Waiter,
+    spec_game: Spectator,
+    udp: UdpServer,
+    clients_udp: UdpClients,
+    updates: Updates,
+    tps: Duration,
+) -> JoinHandle<Result> {
+    s.spawn(move || -> Result {
+        let spinner: SpinSleeper = Default::default();
 
-    let input = packet.into_input()?;
+        loop {
+            // if idle, yield until a packet is received
+            if !spec_game.is_ready() {
+                waiter_dist.wait();
+                waiter_dist.reset();
+            }
 
-    let mut clients = clients_udp.write();
-    let mut obj = clients
-        .get_mut(&addr)
-        .ok_or("Object no longer exists")?
-        .player_mut()
-        .ok_or("Invalid object")?;
+            // TODO - improve this (try not to collect)
+            let new_updates = updates
+                .lock()
+                .iter_mut()
+                .filter_map(|(.., upt)| upt.is_modified().then_some(upt.take()))
+                .collect::<Vec<UptObjOpt>>();
 
-    match input {
-        Input::Mouse(ms) => match ms {
-            Mouse::Wheel { precise_y } => obj.attr_mut().upt_fov(precise_y),
-            Mouse::Motion { xrel, yrel } => obj.attr_mut().look_at(xrel, yrel),
-        },
-        Input::Keyboard(kb) => obj.attr_mut().input(kb),
-    };
-    Ok(addr)
+            // distribute updates to each player
+            for upt in new_updates {
+                // send update to each client
+                for addr in clients_udp.read().keys() {
+                    if let Err(e) = udp.send_to(&upt.serialize(), addr) {
+                        error!("{:?}", e)
+                    }
+                }
+            }
+
+            // respect the TPS
+            spinner.sleep(tps);
+        }
+    })
 }
 
+/// control updates and handle status (parked/unparked) of TPS thread
 fn handle_packets(
     s: &SyncSelect,
+    waiter_game: Waiter,
+    notifier_dist: Notifier,
     clients_udp: UdpClients,
     receiver: Receiver<(Packet, SocketAddr)>,
-    updated: Arc<Mutex<HashSet<SocketAddr>>>,
-    advance: Arc<AtomicBool>,
-    dist_thread: Thread,
+    updates: Updates,
 ) {
+    /// process packet and return recipient's address
+    fn _handle_packets(
+        notifier: &Notifier,
+        clients_udp: &UdpClients,
+        receiver: &Receiver<(Packet, SocketAddr)>,
+        updates: &Updates,
+    ) -> Result<()> {
+        // receive packet with address
+        let (packet, addr) = receiver.recv()?;
+
+        // prepare to update player data
+        let mut clients = clients_udp.write();
+        let obj = clients.get_mut(&addr).ok_or("Object no longer exists")?;
+
+        // only processing input-based events for now
+        match packet[0] {
+            // Keys
+            Keyboard::ID => {
+                let kb = Keyboard::deserialize(&packet[1..]);
+                if kb.is_pressed == 1 {
+                    let was_empty = obj.keys.is_empty();
+                    obj.keys |= Keys::from_bits_retain(kb.bits);
+                    if was_empty {
+                        notifier.notify();
+                    }
+                } else {
+                    obj.keys -= Keys::from_bits_retain(kb.bits);
+                }
+            }
+
+            // Wheel
+            Wheel::ID => {
+                let wheel = Wheel::deserialize(&packet[1..]);
+                obj.cam.upt_fov(wheel.precise_y);
+                updates.lock().get_mut(&addr).unwrap().cam.fov = Some(obj.cam.fov);
+            }
+
+            // Motion
+            MotionOpt::ID => {
+                let motion = MotionOpt::deserialize(&packet[1..]);
+                obj.cam.look_at(
+                    motion.xrel.unwrap_or_default(),
+                    motion.yrel.unwrap_or_default(),
+                );
+                let mut lock = updates.lock();
+                let client_cam = &mut lock.get_mut(&addr).unwrap().cam;
+                client_cam.yaw = Some(obj.cam.yaw);
+                client_cam.pitch = Some(obj.cam.pitch);
+                client_cam.target = Some(obj.cam.target)
+            }
+            _ => unreachable!(),
+        }
+
+        Ok(())
+    }
+
+    let notifier_game = waiter_game.notifier();
+
+    game_handler(s, waiter_game, clients_udp.clone(), updates.clone());
+
     s.spawn(move || -> Result {
         loop {
-            match _handle_packets(&clients_udp, &receiver) {
-                Ok(addr) => {
-                    dist_thread.unpark();
-                    updated.lock().insert(addr);
-                    advance.store(true, Ordering::Release);
+            match _handle_packets(&notifier_game, &clients_udp, &receiver, &updates) {
+                Ok(_) => {
+                    // notify distribution thread
+                    notifier_dist.notify();
                 }
                 Err(e) => error!("{:?}", e),
             }
@@ -97,35 +162,42 @@ fn handle_packets(
     });
 }
 
+/// instantiates TPS and packet processing threads
 fn init_write(
     s: &SyncSelect,
     udp: UdpServer,
     clients_udp: UdpClients,
-    receiver_packet: Receiver<(Packet, SocketAddr)>,
+    receiver: Receiver<(Packet, SocketAddr)>,
+    updates: Updates,
     tps: Duration,
 ) {
-    let updated: Arc<Mutex<HashSet<SocketAddr>>> = Default::default();
-    let advance: Arc<AtomicBool> = Default::default();
+    let waiter_dist = Waiter::default();
+    let notifier_dist = waiter_dist.notifier();
 
-    let dist_thread = handle_dist(
+    let waiter_game = Waiter::default();
+    let spectator_game = waiter_game.spectator();
+
+    handle_dist(
         s,
+        waiter_dist,
+        spectator_game,
         udp,
         clients_udp.clone(),
-        updated.clone(),
-        advance.clone(),
+        updates.clone(),
         tps,
     );
 
     handle_packets(
         s,
+        waiter_game,
+        notifier_dist,
         clients_udp,
-        receiver_packet,
-        updated,
-        advance,
-        dist_thread.thread().clone(),
+        receiver,
+        updates,
     );
 }
 
+/// UDP datagram message distributing thread
 fn handle_incoming(
     s: &SyncSelect,
     udp: UdpServer,
@@ -137,31 +209,36 @@ fn handle_incoming(
         let mut buf = [0; PACKET_SIZE];
 
         loop {
-            match udp.recv_from(&mut buf, PacketKind::all()) {
-                Ok((packet, addr)) => {
-                    // check if user already exists
+            // receive datagram message from any client
+            match udp.recv_from(&mut buf) {
+                Ok((n, addr)) => {
+                    let packet = buf[..n].to_vec();
+
+                    // if the client exists,
+                    // channel packet and source to process handling thread
                     if clients_udp.read().contains_key(&addr) {
                         // send to read channel
                         _ = sender_packet.try_send((packet, addr));
                         continue;
                     }
 
-                    debug!("UDP [ ][3] Received handshake");
-
-                    // validate packet
-                    if let Err(e) = packet.into_client_handshake() {
-                        error!("{:?}", e);
+                    // if client doesn't exist, assume packet is client handshake
+                    if packet[0] == ClientHandshake::ID {
+                        debug!("[UDP] [4] Received client handshake");
+                    } else {
+                        error!("[UDP] [4] Expected PacketClientHandshake");
                         continue;
                     }
 
-                    debug!("UDP [ ][4] Transferring address");
-
                     // share address with TCP server
+                    debug!("[UDP] [5] Channeling UDP address");
                     if let Err(e) = sender_addr.send(addr) {
                         error!("{:?}", e);
+                        continue;
                     }
                 }
                 Err(e) => {
+                    // debugging
                     error!("{:?}", e);
                     break Ok(());
                 }
@@ -172,10 +249,10 @@ fn handle_incoming(
 
 pub fn init_udp(
     s: &SyncSelect,
-    udp_a: UdpServer,
-    udp_b: UdpServer,
+    udp: UdpServer,
     clients_udp: UdpClients,
     sender_addr: Sender<SocketAddr>,
+    updates: Updates,
     tps: Duration,
 ) {
     // real-time game data channel
@@ -183,10 +260,17 @@ pub fn init_udp(
 
     s.spawn_with(move |s| -> Result {
         // handle outgoing
-        init_write(s, udp_a, clients_udp.clone(), receiver_packet, tps);
+        init_write(
+            s,
+            udp.clone(),
+            clients_udp.clone(),
+            receiver_packet,
+            updates,
+            tps,
+        );
 
         // handle incoming UDP packets
-        handle_incoming(s, udp_b, clients_udp, sender_packet, sender_addr);
+        handle_incoming(s, udp.clone(), clients_udp, sender_packet, sender_addr);
 
         Ok(())
     });
