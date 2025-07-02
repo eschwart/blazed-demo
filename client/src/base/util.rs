@@ -164,6 +164,7 @@ pub fn init() -> Result<(
             (height as f32 / 1.4) as u32,
         )
         .resizable()
+        .position_centered()
         .opengl()
         .build()
         .map_err(Error::Window)?;
