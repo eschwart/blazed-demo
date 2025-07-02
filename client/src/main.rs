@@ -174,6 +174,7 @@ fn process_raw_events(
                 if let Some(keys) = try_from_scancode(key) {
                     _ = raw_event_sender.try_send(RawEvent::Keyboard(keys, true));
 
+                    // TODO - somehow get a [`GameEvent::Render`] to occur from this
                     if keys.contains(Keys::RIGHT) {
                         unsafe {
                             if mode {
@@ -304,16 +305,27 @@ fn main() -> Result {
             programs.simple(),
             -128,
             ObjType::Basic,
-            Vec3::new(3.0, 2.0, -4.0),                  // position
-            Vec3::new(0.5, 0.5, 0.5),                   // dimensions
-            Color::new([1.0, 1.0, 0.8, 1.0], true),     // color
+            Vec3::new(3.0, 2.0, -4.0),              // position
+            Vec3::new(0.5, 0.5, 0.5),               // dimensions
+            Color::new([1.0, 0.0, 0.0, 1.0], true), // color
+        )?;
+
+        // another basic 'light' structure
+        raw.new_light(
+            &gl,
+            programs.simple(),
+            -127,
+            ObjType::Basic,
+            Vec3::new(-3.0, 1.0, -4.5),             // position
+            Vec3::new(0.5, 0.5, 0.5),               // dimensions
+            Color::new([0.0, 1.0, 0.0, 1.0], true), // color
         )?;
 
         // basic 'land' structure
         raw.new_cube(
             &gl,
             programs.normal(),
-            -127,
+            -126,
             ObjType::Basic,
             Vec3::new(0.0, -2.0, 0.0),
             Vec3::new(7.5, 0.1, 7.5),
@@ -361,7 +373,7 @@ fn main() -> Result {
         (cam, &objects, state),
         raw_event_sender,
     ) {
-        error!("{}", e)
+        error!("{e}")
     }
 
     // clean everything up
