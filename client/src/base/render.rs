@@ -1,7 +1,10 @@
 use crate::*;
 use crossbeam_channel::Receiver;
 use glow::{COLOR_BUFFER_BIT, Context, DEPTH_BUFFER_BIT, HasContext, NativeProgram};
-use std::io::{Write, stdout};
+use std::{
+    io::{Write, stdout},
+    sync::atomic::AtomicU16,
+};
 use sync_select::*;
 
 fn setup_simple_obj(
@@ -51,22 +54,19 @@ fn setup_normal_obj(
     light_col: &[f32],
     index: usize,
 ) {
+    // set specific indexed light_pos[i]
+    let light_name = format!("p_lights[{index}]");
+    let light_pos_name = format!("{light_name}.pos");
+    let light_col_name = format!("{light_name}.col");
+
     // camera position
     unsafe {
         let loc = gl.get_uniform_location(native, "cam_pos");
         gl.uniform_3_f32_slice(loc.as_ref(), cam_pos);
-    }
 
-    // Set specific indexed light_pos[i]
-    let light_pos_name = format!("light_pos[{index}]");
-    let light_col_name = format!("light_col[{index}]");
-
-    unsafe {
         let loc = gl.get_uniform_location(native, &light_pos_name);
         gl.uniform_3_f32_slice(loc.as_ref(), light_pos);
-    }
 
-    unsafe {
         let loc = gl.get_uniform_location(native, &light_col_name);
         gl.uniform_3_f32_slice(loc.as_ref(), light_col);
     }
@@ -93,7 +93,7 @@ fn render_obj(
     // 'normal' (ambient + diffuse + specular) shading
     if program.kind() == ProgramUnit::Normal {
         unsafe {
-            let loc = gl.get_uniform_location(native, "n_of_lights");
+            let loc = gl.get_uniform_location(native, "p_lights_len");
             gl.uniform_1_i32(loc.as_ref(), lights.len() as i32);
         }
 
@@ -126,19 +126,14 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
         // camera attributes
         let view = cam.view().as_slice();
         let projection = cam.projection().as_slice();
-        let cam_pos = cam.pos().as_slice();
+        let cam_pos = cam.pos();
+        let cam_pos_slice = cam_pos.as_slice();
 
         // light attributes
         let lights = objects.lights().collect::<Vec<&Object>>();
 
-        // render light objects
+        // render light objects first
         for obj in lights.iter() {
-            let model = obj.tran().model();
-            render_obj(gl, obj, model.as_slice(), view, projection, cam_pos, &[]);
-        }
-
-        // render other objects, with lighting
-        for obj in objects.opaque() {
             let model = obj.tran().model();
             render_obj(
                 gl,
@@ -146,18 +141,41 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
                 model.as_slice(),
                 view,
                 projection,
-                cam_pos,
+                cam_pos_slice,
+                &[],
+            );
+        }
+
+        // then, render translucent objects (furthest to closest), then opaque objects
+        for obj in objects.translucent_sorted(*cam_pos).chain(objects.opaque()) {
+            let model = obj.tran().model();
+            render_obj(
+                gl,
+                obj,
+                model.as_slice(),
+                view,
+                projection,
+                cam_pos_slice,
                 lights.as_slice(),
             );
         }
         // swap window
         window.gl_swap_window();
+
+        // for precise frame time (benchmarking)
+        #[cfg(debug_assertions)]
+        gl.finish();
     }
 }
 
 fn handle_raw_events(
     s: &SyncSelect,
-    (fps, tps, ping): (RawFps, RawTps, RawPing),
+    (fps, ft, tps, ping): (
+        Arc<Fps>,
+        Arc<RwLock<Duration>>,
+        Arc<AtomicU16>,
+        Arc<RwLock<Duration>>,
+    ),
     (mw_sender, mm_sender, kb_sender): (Sender<Wheel>, Sender<MotionOpt>, Sender<(Keys, bool)>),
     (raw_event_receiver, event_sender): (Receiver<RawEvent>, Sender<GameEvent>),
 ) {
@@ -180,10 +198,11 @@ fn handle_raw_events(
                 RawEvent::Keyboard(kb, is_pressed) => {
                     if kb.contains(Keys::LEFT) {
                         let fps = fps.get();
+                        let ft = *ft.read();
                         let tps = tps.load(Ordering::Relaxed);
                         let ping = *ping.read();
 
-                        let msg = format!("\r{{ Fps: {fps}, Tps: {tps}, Ping {ping:?} }}");
+                        let msg = format!("\r{{ Fps: {fps} @ {ft:?}, Tps: {tps}, Ping {ping:?} }}");
 
                         if let Err(e) = out.write_all(msg.as_bytes()) {
                             error!("{e}")
@@ -405,7 +424,7 @@ fn process_input(
 fn handle_rendering_uncapped(
     s: &SyncSelect,
     state: RenderState,
-    fps: RawFps,
+    fps: Arc<Fps>,
     event_sender: Sender<GameEvent>,
     render_receiver: Receiver<()>,
 ) -> JoinHandle<RenderStateKind> {
@@ -484,7 +503,12 @@ pub fn render_loop(
     state: RenderState,
     (raw_event_receiver, event_sender): (Receiver<RawEvent>, Sender<GameEvent>),
     channel_fps: (Sender<()>, Receiver<()>),
-    (fps, tps, ping): (RawFps, RawTps, RawPing),
+    (fps, ft, tps, ping): (
+        Arc<Fps>,
+        Arc<RwLock<Duration>>,
+        Arc<AtomicU16>,
+        Arc<RwLock<Duration>>,
+    ),
     cfg: Config,
 ) {
     let (mm_sender, mm_receiver) = bounded(1);
@@ -511,7 +535,7 @@ pub fn render_loop(
     // handle input throughput
     handle_raw_events(
         s,
-        (fps.clone(), tps, ping),
+        (fps.clone(), ft, tps, ping),
         (mm_sender, mw_sender, kb_sender),
         (raw_event_receiver, event_sender.clone()),
     );
