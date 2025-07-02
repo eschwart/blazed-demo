@@ -69,7 +69,7 @@ fn handle_dist(
                 // send update to each client
                 for addr in clients_udp.read().keys() {
                     if let Err(e) = udp.send_to(&upt.serialize(), addr) {
-                        error!("{:?}", e)
+                        error!("{e:?}")
                     }
                 }
             }
@@ -156,7 +156,7 @@ fn handle_packets(
                     // notify distribution thread
                     notifier_dist.notify();
                 }
-                Err(e) => error!("{:?}", e),
+                Err(e) => error!("{e:?}"),
             }
         }
     });
@@ -233,13 +233,13 @@ fn handle_incoming(
                     // share address with TCP server
                     debug!("[UDP] [5] Channeling UDP address");
                     if let Err(e) = sender_addr.send(addr) {
-                        error!("{:?}", e);
+                        error!("{e:?}");
                         continue;
                     }
                 }
                 Err(e) => {
                     // debugging
-                    error!("{:?}", e);
+                    error!("{e:?}");
                     break Ok(());
                 }
             }

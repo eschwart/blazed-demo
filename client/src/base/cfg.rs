@@ -15,7 +15,7 @@ pub struct Config {
     /// Remote TCP IP address
     #[arg(alias = "rt", long, default_value_t = get_socket_addr(TCP_PORT))]
     remote_tcp_addr: SocketAddr,
-    
+
     /// Local UDP IP address (optional)
     #[arg(alias = "lu", long)]
     local_udp_addr: Option<SocketAddr>,

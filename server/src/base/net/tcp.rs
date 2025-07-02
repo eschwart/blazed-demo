@@ -71,9 +71,9 @@ fn handle_alive(
     spawn(move || {
         if let Err(Error::Blazed(BlazedError::Io(e))) = _handle_alive(tcp) {
             if let std::io::ErrorKind::ConnectionReset = e.kind() {
-                info!("{} has left", addr_tcp)
+                info!("{addr_tcp} has left")
             } else {
-                warn!("{}", e)
+                warn!("{e}")
             }
         }
 
@@ -117,7 +117,7 @@ fn handle_incoming(
         for tcp in tcp_listener.incoming() {
             // the client's tcp address
             let addr_tcp = tcp.peer_addr()?;
-            info!("{} attempting to join", addr_tcp);
+            info!("{addr_tcp} attempting to join");
 
             // init handshake process
             match handshake(
@@ -127,7 +127,7 @@ fn handle_incoming(
                 id.load(Ordering::Relaxed),
             ) {
                 Ok(addr_udp) => {
-                    info!("{} has joined", addr_tcp);
+                    info!("{addr_tcp} has joined");
 
                     // increment if handshake was successful
                     let id = id.fetch_add(1, Ordering::Relaxed);
@@ -167,7 +167,7 @@ fn handle_incoming(
                         sender_packet.clone(),
                     );
                 }
-                Err(e) => error!("[handle_incoming] {:?}", e),
+                Err(e) => error!("[handle_incoming] {e:?}"),
             }
         }
         unreachable!()
