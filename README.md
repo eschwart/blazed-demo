@@ -3,20 +3,24 @@
 A client-server 3D renderer featuring real-time player movement and view synchronization within a dynamic n-tick rate system. Built with [Rust](https://www.rust-lang.org/) using [OpenGL](https://crates.io/crates/glow) and [SDL2](https://crates.io/crates/sdl2).
 
 ## Features
-- n-tick rate server (default: 128)
-- multiplayer (capacity: $\infty$)
-- basic lighting (ambient + diffuse + specular)
-- back-face culling
+- n-tick rate server (default: 128).
+- multiplayer (capacity: $\infty$).
+- basic lighting (ambient + diffuse + specular).
+- back-face culling.
+
+## Bugs
+- Seems to have a very difficult time processing input (keyboard/mouse) if there's too much being rendered.
+  - maybe a bottleneck with certain channels..
+- The server tends to fall apart with 3+ connections.
+- In-and-out clipping with translucent objects.
+  - preventing object clipping (collision) entirely (objects inside one another) might fix this.
 
 ## Todo
-- Improve documentation (severely).
-- Fix server implementation
-  - The server tends to fall apart with 3+ connections.
-- Implement client-side server interpolation.
-- Implement culling techniques (frustrum & occlusion)
-- Implement instanced-based rendering.
-- Implement [AABB](https://developer.mozilla.org/en-US/docs/Games/Techniques/3D_collision_detection)-based collision.
-  - Maybe try [kiddo](https://crates.io/crates/kiddo).
+1. Improve documentation (severely).
+2. Implement instanced-based rendering.
+3. Implement culling techniques (frustrum & occlusion).
+4. Implement [AABB](https://developer.mozilla.org/en-US/docs/Games/Techniques/3D_collision_detection)-based collision (look into [kiddo](https://crates.io/crates/kiddo)).
+5. Implement client-side server interpolation.
 
 ## Development
 Retrieve the repository:
