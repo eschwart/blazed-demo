@@ -8,8 +8,12 @@ out vec4 frag_col;
 uniform vec4 obj_col;
 uniform vec3 cam_pos;
 
-uniform vec3 light_pos;
-uniform vec3 light_col;
+// TODO - figure out if we can make this dynamic?
+#define NUM_MAX_LIGHTS 16
+
+uniform int n_of_lights;
+uniform vec3 light_pos[NUM_MAX_LIGHTS]; 
+uniform vec3 light_col[NUM_MAX_LIGHTS];
 
 // ambient shading property
 vec3 get_ambient(float strength, vec3 light_col) {
@@ -76,13 +80,13 @@ vec3 calc_point_light(vec3 pos, vec3 col) {
     vec3 light_dir = normalize(frag_to_light);
 
     // ambient
-    vec3 ambient = get_ambient(0.2, light_col);
+    vec3 ambient = get_ambient(0.2, col);
 
     // diffuse
-    vec3 diffuse = get_diffuse(frag_norm, light_dir, light_col);
+    vec3 diffuse = get_diffuse(frag_norm, light_dir, col);
 
     // specular
-    vec3 specular = get_specular(0.5, frag_pos, frag_norm, light_dir, light_col);
+    vec3 specular = get_specular(0.5, frag_pos, frag_norm, light_dir, col);
 
     // attenuation
     float att = get_attenuation(frag_to_light);
@@ -91,11 +95,13 @@ vec3 calc_point_light(vec3 pos, vec3 col) {
 }
 
 void main() {
-    vec3 direction = calc_dir_light(vec3(-1.0, -0.2, 0.2), vec3(0.2, 0.2, 0.15));
-    vec3 point = calc_point_light(light_pos, light_col);
-
     vec3 lighting = vec3(0.0, 0.0, 0.0);
-    lighting += direction;
+    lighting += calc_dir_light(vec3(-1.0, -0.2, 0.2), vec3(0.2, 0.2, 0.15));
+
+    // using only first light for now
+    // TODO - iterate through each light's point light
+    // https://learnopengl.com/Lighting/Multiple-lights
+    vec3 point = calc_point_light(light_pos[0], light_col[0]);
     lighting += point;
 
     // putting everything together

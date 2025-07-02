@@ -49,25 +49,27 @@ fn setup_normal_obj(
     cam_pos: &[f32],
     light_pos: &[f32],
     light_col: &[f32],
+    index: usize,
 ) {
     // camera position
-    unsafe { gl.uniform_3_f32_slice(gl.get_uniform_location(native, "cam_pos").as_ref(), cam_pos) };
-
-    // light position attibute
     unsafe {
-        gl.uniform_3_f32_slice(
-            gl.get_uniform_location(native, "light_pos").as_ref(),
-            light_pos,
-        )
-    };
+        let loc = gl.get_uniform_location(native, "cam_pos");
+        gl.uniform_3_f32_slice(loc.as_ref(), cam_pos);
+    }
 
-    // light color attribute
+    // Set specific indexed light_pos[i]
+    let light_pos_name = format!("light_pos[{index}]");
+    let light_col_name = format!("light_col[{index}]");
+
     unsafe {
-        gl.uniform_3_f32_slice(
-            gl.get_uniform_location(native, "light_col").as_ref(),
-            light_col,
-        )
-    };
+        let loc = gl.get_uniform_location(native, &light_pos_name);
+        gl.uniform_3_f32_slice(loc.as_ref(), light_pos);
+    }
+
+    unsafe {
+        let loc = gl.get_uniform_location(native, &light_col_name);
+        gl.uniform_3_f32_slice(loc.as_ref(), light_col);
+    }
 }
 
 /// TODO - impl instanced rendering
@@ -78,8 +80,7 @@ fn render_obj(
     view: &[f32],
     projection: &[f32],
     cam_pos: &[f32],
-    light_pos: &[f32],
-    light_col: &[f32],
+    lights: &[&Object],
 ) {
     // current program
     let program = obj.program();
@@ -91,7 +92,17 @@ fn render_obj(
 
     // 'normal' (ambient + diffuse + specular) shading
     if program.kind() == ProgramUnit::Normal {
-        setup_normal_obj(gl, native, cam_pos, light_pos, light_col);
+        unsafe {
+            let loc = gl.get_uniform_location(native, "n_of_lights");
+            gl.uniform_1_i32(loc.as_ref(), lights.len() as i32);
+        }
+
+        for (i, light) in lights.iter().enumerate() {
+            let pos = light.cam.eye;
+            let light_pos = pos.as_slice();
+            let light_col = &light.color()[..3];
+            setup_normal_obj(gl, native, cam_pos, light_pos, light_col, i);
+        }
     }
 
     // bind then render
@@ -118,15 +129,17 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
         let cam_pos = cam.pos().as_slice();
 
         // light attributes
-        let light = objects.lights().next().unwrap(); /////////////////////////////////////////// TODO
-        let pos = light.cam.eye;
-        let light_pos = pos.as_slice();
-        let light_col = &light.color()[..3];
+        let lights = objects.lights().collect::<Vec<&Object>>();
 
-        // render lights then the rest
-        objects.lights().chain(objects.opaque()).for_each(|obj| {
+        // render light objects
+        for obj in lights.iter() {
             let model = obj.tran().model();
+            render_obj(gl, obj, model.as_slice(), view, projection, cam_pos, &[]);
+        }
 
+        // render other objects, with lighting
+        for obj in objects.opaque() {
+            let model = obj.tran().model();
             render_obj(
                 gl,
                 obj,
@@ -134,10 +147,9 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
                 view,
                 projection,
                 cam_pos,
-                light_pos,
-                light_col,
+                lights.as_slice(),
             );
-        });
+        }
         // swap window
         window.gl_swap_window();
     }
@@ -171,10 +183,10 @@ fn handle_raw_events(
                         let tps = tps.load(Ordering::Relaxed);
                         let ping = *ping.read();
 
-                        let msg = format!("\r{{ Fps: {}, Tps: {}, Ping {:?} }}", fps, tps, ping);
+                        let msg = format!("\r{{ Fps: {fps}, Tps: {tps}, Ping {ping:?} }}");
 
                         if let Err(e) = out.write_all(msg.as_bytes()) {
-                            error!("{}", e)
+                            error!("{e}")
                         } else {
                             _ = out.flush()
                         }
