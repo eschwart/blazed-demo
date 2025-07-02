@@ -28,19 +28,16 @@ pub fn handle_udp(
             let n = udp.recv(&mut buf)?;
             let bytes = &buf[1..n];
 
-            match buf[0] {
-                UptObjOpt::ID => {
-                    let data = UptObjOpt::deserialize(bytes);
+            if buf[0] == UptObjOpt::ID {
+                let data = UptObjOpt::deserialize(bytes);
 
-                    let action = if id == data.id {
-                        ObjectAction::User { data }
-                    } else {
-                        ObjectAction::Upt { data }
-                    };
-                    event_sender.send(GameEvent::Object(action))?;
-                    _ = render_sender.try_send(());
-                }
-                _ => (),
+                let action = if id == data.id {
+                    ObjectAction::User { data }
+                } else {
+                    ObjectAction::Upt { data }
+                };
+                event_sender.send(GameEvent::Object(action))?;
+                _ = render_sender.try_send(());
             }
 
             // increment TPS

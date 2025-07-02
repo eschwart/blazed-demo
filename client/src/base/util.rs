@@ -65,7 +65,7 @@ impl std::ops::Deref for GL {
         unsafe {
             let code = self.0.get_error();
             if code != 0 {
-                error!("OPENGL: {}", code)
+                error!("OPENGL: {code}")
             }
         }
         &self.0

@@ -130,7 +130,7 @@ pub fn init_conn(
 
             // handle result
             if let Err(e) = result {
-                error!("[init_conn] {}", e);
+                error!("[init_conn] {e}");
             }
 
             // reset game state
