@@ -4,6 +4,7 @@ use glow::{
     ARRAY_BUFFER, Context, ELEMENT_ARRAY_BUFFER, FLOAT, HasContext, NativeBuffer,
     NativeVertexArray, STATIC_DRAW, TRIANGLE_STRIP, TRIANGLES, UNSIGNED_BYTE,
 };
+use ordered_float::OrderedFloat;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -405,8 +406,18 @@ impl DerefMut for Object {
 }
 
 #[derive(Clone, Debug, Default)]
+struct ObjInfo {
+    index: usize,
+    is_opaque: bool,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct RawObjects {
-    opaque: HashMap<Id, Object>,
+    opaque: Vec<Object>,
+    translucent: Vec<Object>,
+    lookup: HashMap<Id, ObjInfo>,
+
+    lights: HashMap<Id, Object>,
 }
 
 impl RawObjects {
@@ -436,18 +447,72 @@ impl RawObjects {
     /// create and add a new cube with specified [`ObjectData`].
     pub fn new_cube_with(&mut self, gl: &Context, program: Program, data: UptObj) -> Result {
         let obj = Object::create_cube_with(gl, program, data)?;
-        self.opaque.insert(data.id, obj);
+        self.insert(obj);
         Ok(())
     }
 
     /// return a mutable reference of the specified object.
     pub fn get_mut(&mut self, id: Id) -> Option<&mut Object> {
-        self.opaque.get_mut(&id)
+        let &ObjInfo { index, is_opaque } = self.lookup.get(&id)?;
+        if is_opaque {
+            self.opaque.get_mut(index)
+        } else {
+            self.translucent.get_mut(index)
+        }
     }
 
     /// insert a new object.
     pub fn insert(&mut self, obj: Object) {
-        self.opaque.insert(obj.id(), obj);
+        let is_opaque = obj.color.alpha() == 1.0;
+        let index = if is_opaque {
+            let index = self.opaque.len();
+            self.opaque.push(obj);
+            index
+        } else {
+            let index = self.opaque.len();
+            self.translucent.push(obj);
+            index
+        };
+        self.lookup.insert(obj.id(), ObjInfo { index, is_opaque });
+    }
+
+    /// remove the object specified object.
+    pub fn remove(&mut self, id: Id) -> Option<Object> {
+        let ObjInfo { index, is_opaque } = self.lookup.remove(&id)?;
+
+        Some(if is_opaque {
+            self.opaque.remove(index)
+        } else {
+            self.translucent.remove(index)
+        })
+    }
+
+    /// retain only the objects specified by object type.
+    pub fn retain(&mut self, gl: &Context, kind: ObjType) {
+        self.opaque.retain(|obj| {
+            if kind == obj.kind {
+                free_buffers(gl, obj.buffers());
+                false
+            } else {
+                true
+            }
+        });
+        self.translucent.retain(|obj| {
+            if kind == obj.kind {
+                free_buffers(gl, obj.buffers());
+                false
+            } else {
+                true
+            }
+        });
+        self.lights.retain(|_, obj| {
+            if kind == obj.kind {
+                free_buffers(gl, obj.buffers());
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// create and add a new light (simple shading with color as light color) object.
@@ -462,43 +527,34 @@ impl RawObjects {
         color: Color,
     ) -> Result {
         let obj = Object::create_flat_cube(gl, program, id, kind, pos, dim, color)?;
-        self.opaque.insert(id, obj);
+        self.lights.insert(obj.id(), obj);
         Ok(())
     }
 
-    /// remove the object specified object.
-    pub fn remove(&mut self, id: Id) -> Option<Object> {
-        self.opaque.remove(&id)
-    }
-
-    /// retain only the objects specified by object type.
-    pub fn retain(&mut self, gl: &Context, kind: ObjType) {
-        self.opaque.retain(|_, obj| {
-            if kind == obj.kind {
-                free_buffers(gl, obj.buffers());
-                false
-            } else {
-                true
-            }
-        });
-    }
-
-    /// return an iterator of every light object
-    pub fn lights(&self) -> impl Iterator<Item = &Object> {
-        self.opaque.values().filter(|o| o.color.is_emit())
-    }
-
-    /// return an iterator of every object in descending order,
-    /// based on the alpha value color of each object.
+    /// return an iterator of every opaque object.
     pub fn opaque(&self) -> impl Iterator<Item = &Object> {
-        self.opaque.values().filter(|o| !o.color.is_emit())
+        self.opaque.iter()
     }
 
+    /// return an iterator of every translucent object.
+    pub fn translucent(&self) -> impl Iterator<Item = &Object> {
+        self.translucent.iter()
+    }
+
+    /// return an iterator of every light object.
+    pub fn lights(&self) -> impl Iterator<Item = &Object> {
+        self.lights.values()
+    }
+
+    /// return an iterator of every translucent object, sorted from furthest to closest.
+    pub fn translucent_sorted(&self, pos: Vec3) -> impl Iterator<Item = &Object> {
+        let mut sorted: Vec<&Object> = self.translucent.iter().collect();
+        sorted.sort_by_cached_key(|o| OrderedFloat(-(pos - o.cam.eye).mag_sq()));
+        sorted.into_iter()
+    }
+
+    /// return an iterator over every object (generally used for cleanup).
     pub fn iter(&self) -> impl Iterator<Item = &Object> {
-        self.opaque.values()
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Object> {
-        self.opaque.values_mut()
+        self.opaque().chain(self.translucent()).chain(self.lights())
     }
 }
