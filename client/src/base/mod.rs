@@ -120,7 +120,7 @@ pub enum UserAction {
 /// Event wrappers related to the game.
 #[derive(Clone, Debug)]
 pub enum GameEvent {
-    Quit,
+    Quit,   // exit the program
     Reset,
     Render(RenderAction),
     Object(ObjectAction),

@@ -28,6 +28,8 @@ impl Program {
 pub struct Shaders {
     simple: Program,
     normal: Program,
+    // add shaders here (e.g.,
+    // penis: Program
 }
 
 impl Shaders {

@@ -50,6 +50,7 @@ fn handle_game_events(s: &SyncSelect, receiver: Receiver<GameEvent>, sender: Eve
     });
 }
 
+// TOP-LEVEL THREAD (the godfather)
 fn process_raw_events(
     gl: &GL,
     programs: &Shaders,
@@ -202,10 +203,13 @@ fn process_raw_events(
 }
 
 fn main() -> Result {
-    env_logger::init();
+    env_logger::init(); // instantiating logger
+
+    // program arguments
     let cfg = Config::default();
 
     // init sdl and config
+    // gl - needs to stay main thread
     let (sdl, video, timer, gl, window, ev, ep, _ctx) = init()?;
     video.gl_set_swap_interval(SwapInterval::Immediate)?;
     sdl.mouse().set_relative_mouse_mode(true);
@@ -300,9 +304,9 @@ fn main() -> Result {
             programs.simple(),
             -128,
             ObjType::Basic,
-            Vec3::new(3.0, 2.0, -4.0),
-            Vec3::new(0.5, 0.5, 0.5),
-            Color::new([1.0, 1.0, 0.8, 1.0], true),
+            Vec3::new(3.0, 2.0, -4.0),                  // position
+            Vec3::new(0.5, 0.5, 0.5),                   // dimensions
+            Color::new([1.0, 1.0, 0.8, 1.0], true),     // color
         )?;
 
         // basic 'land' structure

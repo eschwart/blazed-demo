@@ -95,6 +95,7 @@ fn render_obj(
     }
 
     // bind then render
+    // TODO - USE THE CALL FOR INSTANCED RENDERING
     unsafe { gl.bind_vertex_array(Some(obj.vao())) };
     unsafe { gl.draw_elements(obj.mode(), obj.len(), obj.element_type(), 0) };
 
@@ -103,6 +104,8 @@ fn render_obj(
     unsafe { gl.use_program(None) };
 }
 
+/// RENDER EVERYTHING
+///
 /// TODO - impl multiple lights
 pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObjects) {
     unsafe {
@@ -397,7 +400,7 @@ fn handle_rendering_uncapped(
     let render = move || -> Result {
         event_sender.send(GameEvent::Render(RenderAction::Flush))?;
 
-        // incrememnt frame count
+        // increment frame count
         fps.incr();
 
         Ok(())
@@ -480,6 +483,8 @@ pub fn render_loop(
     let (input_sender, input_receiver) = bounded(1);
 
     if cfg.is_online() {
+        // NETWORKING
+        //
         // init TCP and UDP threads
         init_conn(
             s,
