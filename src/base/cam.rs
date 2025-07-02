@@ -185,13 +185,13 @@ impl RawCamera {
 
     pub fn upt_aspect_ratio(&mut self, w: i32, h: i32) {
         let aspect_ratio = Self::calc_aspect_ratio(w, h);
-        self.projection = perspective_gl(self.attr.fov * RADIAN, aspect_ratio, 0.01, 1000.0);
+        self.projection = Self::perspective(self.attr.fov, aspect_ratio);
         self.upt();
     }
 
     pub fn upt_fov(&mut self, precise_y: f32) {
         self.attr.upt_fov(precise_y);
-        self.projection = perspective_gl(self.attr.fov * RADIAN, self.aspect_ratio, 0.01, 1000.0);
+        self.projection = Self::perspective(self.attr.fov, self.aspect_ratio);
         self.upt();
     }
 
@@ -225,7 +225,7 @@ impl RawCamera {
     fn init(aspect_ratio: f32) -> Self {
         let attr = CameraAttr::default();
         let view = Mat4::identity();
-        let projection = perspective_gl(attr.fov * RADIAN, aspect_ratio, 0.01, 1000.0);
+        let projection = Self::perspective(attr.fov, aspect_ratio);
 
         let mut cam = Self {
             attr,
@@ -238,5 +238,10 @@ impl RawCamera {
         cam.upt();
 
         cam
+    }
+
+    // default z_near and z_far values for now
+    fn perspective(fov: f32, aspect_ratio: f32) -> Mat4 {
+        perspective_gl(fov * RADIAN, aspect_ratio, 0.01, 10_000.0)
     }
 }

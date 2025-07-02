@@ -1,7 +1,7 @@
 use crate::*;
 use std::time::Instant;
 
-fn ping_handler(s: &SyncSelect, ping: RawPing, rate: Arc<RwLock<Duration>>) {
+fn ping_handler(s: &SyncSelect, ping: Arc<RwLock<Duration>>, rate: Arc<RwLock<Duration>>) {
     s.spawn(move || {
         let spin = SpinSleeper::default();
 
@@ -19,10 +19,10 @@ pub fn handle_tcp(
     tcp: TcpClient,
     render_sender: Sender<()>,
     event_sender: Sender<GameEvent>,
-    ping: RawPing,
+    ping: Arc<RwLock<Duration>>,
     id: Id,
 ) {
-    let rate: RawRate = Default::default();
+    let rate: Arc<RwLock<Duration>> = Default::default();
 
     ping_handler(s, ping, rate.clone());
 

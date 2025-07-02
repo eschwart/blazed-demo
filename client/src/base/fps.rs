@@ -45,11 +45,9 @@ impl Fps {
     }
 }
 
-pub type RawFps = Arc<Fps>;
-
 #[derive(Clone, Debug, Default)]
 pub struct Limit {
-    inner: RawRate,
+    inner: Arc<RwLock<Duration>>,
 }
 
 impl Limit {

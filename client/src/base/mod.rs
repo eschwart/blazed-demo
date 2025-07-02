@@ -19,23 +19,7 @@ pub use util::*;
 pub use blazed_demo::*;
 
 use atomic_enum::*;
-use std::{
-    ops::Deref,
-    sync::{Arc, atomic::AtomicU16},
-    time::Duration,
-};
-
-/// A thread-safe read-write locked [`std::time::Duration`].
-pub type RawRate = Arc<RwLock<Duration>>;
-
-/// A thread-safe read-write locked [`std::sync::atomic::AtomicU16`].
-pub type RawTps = Arc<AtomicU16>;
-
-// /// A thread-safe read-write locked [`blazed_demo::RawKeys`].
-// pub type RawKeys = Arc<Keys>;
-
-/// A thread-safe read-write locked [`std::time::Duration`].
-pub type RawPing = Arc<RwLock<Duration>>;
+use std::{ops::Deref, sync::Arc};
 
 /// A reference to a read-only locked [`RawObjects`].
 pub type ObjectsRef<'a> = &'a RwLock<RawObjects>;
@@ -125,7 +109,7 @@ pub enum GameEvent {
     Render(RenderAction),
     Object(ObjectAction),
     User(UserAction),
-    Fps(u8),
+    Fps(u8), // dynamically update FPS limit
 }
 
 /// Event wrappers related to the backend.
