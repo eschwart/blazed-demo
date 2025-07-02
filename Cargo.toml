@@ -23,6 +23,7 @@ sync_select = "0.2.0"
 thiserror = "2.0.12"
 ultraviolet = { version = "0.10.0", features = ["bytemuck"] }
 wopt = { version = "0.3.9", features = ["bytemuck"] }
+rand = "0.9.1"
 
 [dependencies]
 atomflag = { workspace = true }
@@ -44,6 +45,7 @@ sync_select = { workspace = true }
 thiserror = { workspace = true }
 ultraviolet = { workspace = true }
 wopt = { workspace = true }
+rand = { workspace = true }
 
 [profile.release]
 lto = true

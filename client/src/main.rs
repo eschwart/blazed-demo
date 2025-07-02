@@ -5,6 +5,7 @@ mod base;
 use base::*;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use glow::{FILL, FRONT_AND_BACK, HasContext, LINE};
+use rand::Rng;
 use sdl2::{
     EventPump, TimerSubsystem,
     event::{Event, EventSender, WindowEvent},
@@ -59,9 +60,32 @@ fn process_raw_events(
     mut ep: EventPump,
     (cam, objects, state): (Camera, ObjectsRef, RenderState),
     raw_event_sender: Sender<RawEvent>,
+    ft: Arc<RwLock<Duration>>,
 ) -> Result {
-    let mut mode = false;
+    #[cfg(debug_assertions)]
+    let mut polygon_mode = false;
 
+    // closure that handles handles the render event
+    let render = |action| {
+        // usually window-based events
+        if let RenderAction::AspectRatio { w, h } = action {
+            unsafe {
+                gl.viewport(0, 0, w, h);
+            }
+            cam.write().upt_aspect_ratio(w, h);
+        }
+        // start frame timer
+        let t = std::time::Instant::now();
+
+        // render a frame
+        display(gl, &window, &cam.read(), &objects.read());
+
+        // end frame timer
+        *ft.write() = t.elapsed();
+    };
+
+    // TODO - modularize the match statements so that there is
+    //        a specific function for each case.
     for event in ep.wait_iter() {
         match event {
             Event::User { .. } => {
@@ -72,17 +96,7 @@ fn process_raw_events(
                             // remove and deallocate all player objects
                             objects.write().retain(gl, ObjType::Player);
                         }
-                        GameEvent::Render(action) => {
-                            // usually window-based events
-                            if let RenderAction::AspectRatio { w, h } = action {
-                                unsafe {
-                                    gl.viewport(0, 0, w, h);
-                                }
-                                cam.write().upt_aspect_ratio(w, h);
-                            }
-                            // render a frame
-                            display(gl, &window, &cam.read(), &objects.read());
-                        }
+                        GameEvent::Render(action) => render(action),
                         GameEvent::Object(action) => {
                             match action {
                                 ObjectAction::Add { data } => {
@@ -138,7 +152,7 @@ fn process_raw_events(
                             let old_state = timer_fps_cfg(fps) == 0;
                             let new_state = fps == 0;
 
-                            // only reload the rendering state if fps mode is changed
+                            // only reload the rendering state if fps polygon_mode is changed
                             if old_state != new_state {
                                 state.store(RenderStateKind::Reload, Ordering::Relaxed);
                             }
@@ -174,16 +188,19 @@ fn process_raw_events(
                 if let Some(keys) = try_from_scancode(key) {
                     _ = raw_event_sender.try_send(RawEvent::Keyboard(keys, true));
 
-                    // TODO - somehow get a [`GameEvent::Render`] to occur from this
+                    // DEBUGGING
+                    #[cfg(debug_assertions)]
                     if keys.contains(Keys::RIGHT) {
                         unsafe {
-                            if mode {
+                            if polygon_mode {
                                 gl.polygon_mode(FRONT_AND_BACK, FILL);
                             } else {
                                 gl.polygon_mode(FRONT_AND_BACK, LINE);
                             }
-                            mode = !mode;
+                            polygon_mode = !polygon_mode;
                         }
+                        // flush to instantly render the change
+                        render(RenderAction::Flush)
                     }
                 }
             }
@@ -221,7 +238,7 @@ fn main() -> Result {
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // custom frames/second handler
-    let (spin, limit, fps): (SpinSleeper, Limit, RawFps) = Default::default();
+    let (spin, limit, fps): (SpinSleeper, Limit, Arc<Fps>) = Default::default();
     let freq = timer.performance_frequency() as f32;
 
     // reset the fps counter every second
@@ -295,7 +312,7 @@ fn main() -> Result {
     let (raw_event_sender, raw_event_receiver) = bounded::<RawEvent>(32);
     let (event_sender, event_receiver) = bounded::<GameEvent>(32);
 
-    // object storage manager
+    // TODO - please implement instanced-based rendering
     let objects = {
         let mut raw = RawObjects::default();
 
@@ -305,9 +322,9 @@ fn main() -> Result {
             programs.simple(),
             -128,
             ObjType::Basic,
-            Vec3::new(3.0, 2.0, -4.0),              // position
+            Vec3::new(3.0, 0.0, -4.0),              // position
             Vec3::new(0.5, 0.5, 0.5),               // dimensions
-            Color::new([1.0, 0.0, 0.0, 1.0], true), // color
+            Color::new([0.2, 0.0, 1.0, 1.0], true), // color (emit: true)
         )?;
 
         // another basic 'light' structure
@@ -318,7 +335,7 @@ fn main() -> Result {
             ObjType::Basic,
             Vec3::new(-3.0, 1.0, -4.5),             // position
             Vec3::new(0.5, 0.5, 0.5),               // dimensions
-            Color::new([0.0, 1.0, 0.0, 1.0], true), // color
+            Color::new([0.6, 1.0, 0.0, 1.0], true), // color (emit: true)
         )?;
 
         // basic 'land' structure
@@ -327,16 +344,54 @@ fn main() -> Result {
             programs.normal(),
             -126,
             ObjType::Basic,
-            Vec3::new(0.0, -2.0, 0.0),
-            Vec3::new(7.5, 0.1, 7.5),
-            Color::new([1.0, 0.5, 0.31, 0.9], false),
+            Vec3::new(0.0, -2.0, 0.0),                // position
+            Vec3::new(7.5, 0.1, 7.5),                 // dimensions
+            Color::new([1.0, 0.5, 0.31, 0.9], false), // color (emit: false)
         )?;
 
+        // DEBUGGING - generate random cubes (none of this is instanced-based)
+        let mut rng = rand::rng();
+        for id in -125..i8::MAX {
+            let pos = Vec3::new(
+                if rng.random_bool(0.5) {
+                    rng.random_range(-1000.0..-50.0)
+                } else {
+                    rng.random_range(10.0..1000.0)
+                },
+                rng.random_range(-50.0..500.0),
+                if rng.random_bool(0.5) {
+                    rng.random_range(-1000.0..-50.0)
+                } else {
+                    rng.random_range(50.0..1000.0)
+                },
+            );
+
+            let dims = Vec3::new(
+                rng.random_range(0.1..50.0),
+                rng.random_range(0.1..50.0),
+                rng.random_range(0.1..50.0),
+            );
+
+            let color = Color::new(
+                [
+                    rng.random_range(0.0..1.0),
+                    rng.random_range(0.0..1.0),
+                    rng.random_range(0.0..1.0),
+                    rng.random_range(0.01..0.1),
+                ],
+                false,
+            );
+
+            raw.new_cube(&gl, programs.normal(), id, ObjType::Basic, pos, dims, color)?;
+        }
         Objects::new(raw)
     };
 
     // the user's camera
     let cam = Camera::new(window.size());
+
+    // frame-time variable
+    let ft: Arc<RwLock<Duration>> = Default::default();
 
     // determinant of the status of threads
     let state: RenderState = Arc::new(AtomicRenderStateKind::new(RenderStateKind::Pass));
@@ -356,7 +411,7 @@ fn main() -> Result {
         state.clone(),
         (raw_event_receiver, event_sender.clone()),
         (fps_sender_1, fps_receiver_2),
-        (fps, RawTps::default(), RawPing::default()),
+        (fps, ft.clone(), Default::default(), Default::default()),
         cfg,
     );
 
@@ -372,6 +427,7 @@ fn main() -> Result {
         ep,
         (cam, &objects, state),
         raw_event_sender,
+        ft,
     ) {
         error!("{e}")
     }

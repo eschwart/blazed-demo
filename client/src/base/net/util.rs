@@ -1,7 +1,7 @@
 use crate::*;
 use crossbeam_channel::{Receiver, Sender};
 use pfrs::*;
-use std::{net::Ipv4Addr, thread::sleep};
+use std::{net::Ipv4Addr, sync::atomic::AtomicU16, thread::sleep};
 
 /// obtain player identity and gamestates from server
 pub fn handshake(
@@ -65,7 +65,7 @@ pub fn handle_conn(
     input_receiver: Receiver<Vec<u8>>,
     render_sender: Sender<()>,
     event_sender: Sender<GameEvent>,
-    (tps, ping): (RawTps, RawPing),
+    (tps, ping): (Arc<AtomicU16>, Arc<RwLock<Duration>>),
     cfg: &Config,
 ) -> Result<()> {
     // establish connection
@@ -114,7 +114,7 @@ pub fn init_conn(
     input_receiver: Receiver<Vec<u8>>,
     render_sender: Sender<()>,
     event_sender: Sender<GameEvent>,
-    stats: (RawTps, RawPing),
+    stats: (Arc<AtomicU16>, Arc<RwLock<Duration>>),
     cfg: Config,
 ) {
     s.spawn(move || -> Result {

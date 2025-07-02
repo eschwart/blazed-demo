@@ -6,7 +6,7 @@ pub fn handle_udp(
     udp: UdpClient,
     render_sender: Sender<()>,
     event_sender: Sender<GameEvent>,
-    tps: RawTps,
+    tps: Arc<AtomicU16>,
     id: Id,
 ) {
     let rate: Arc<AtomicU16> = Default::default();
