@@ -1,21 +1,18 @@
 use crate::*;
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU8, Ordering},
-    },
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 
 #[derive(Debug, Default)]
 pub struct Fps {
-    inner: AtomicU8,  // frames-per-second
-    live: AtomicU8,   // frame incrementer
-    target: AtomicU8, // frame target [0 for max]
+    inner: AtomicId,  // frames-per-second
+    live: AtomicId,   // frame incrementer
+    target: AtomicId, // frame target [0 for max]
 }
 
 impl Fps {
-    pub fn get(&self) -> u8 {
+    pub fn get(&self) -> Id {
         self.inner.load(Ordering::SeqCst)
     }
 
@@ -23,19 +20,19 @@ impl Fps {
         let _ = self
             .live
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |val| {
-                if val < u8::MAX {
+                if val < Id::MAX {
                     Some(val + 1)
                 } else {
-                    Some(u8::MAX)
+                    Some(Id::MAX)
                 }
             });
     }
 
-    pub fn target(&self) -> u8 {
+    pub fn target(&self) -> Id {
         self.target.load(Ordering::SeqCst)
     }
 
-    pub fn swap_target(&self, fps: u8) -> u8 {
+    pub fn swap_target(&self, fps: Id) -> Id {
         self.target.swap(fps, Ordering::Relaxed)
     }
 
@@ -55,7 +52,7 @@ impl Limit {
         *self.inner.read()
     }
 
-    pub fn set(&self, fps: u8) {
+    pub fn set(&self, fps: Id) {
         *self.inner.write() = tick_dur(fps)
     }
 }

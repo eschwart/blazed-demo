@@ -54,9 +54,8 @@ fn handle_game_events(s: &SyncSelect, receiver: Receiver<GameEvent>, sender: Eve
 // TOP-LEVEL THREAD (the godfather)
 fn process_raw_events(
     gl: &GL,
-    programs: &Shaders,
     window: Window,
-    timer_fps_cfg: &mut impl FnMut(u8) -> u8,
+    timer_fps_cfg: &mut impl FnMut(Id) -> Id,
     mut ep: EventPump,
     (cam, objects, state): (Camera, ObjectsRef, RenderState),
     raw_event_sender: Sender<RawEvent>,
@@ -93,35 +92,53 @@ fn process_raw_events(
                     match user_event {
                         GameEvent::Quit => break,
                         GameEvent::Reset => {
-                            // remove and deallocate all player objects
-                            objects.write().retain(gl, ObjType::Player);
+                            // // remove and deallocate all player objects
+                            // objects.write().retain(gl, ObjType::Player);
                         }
                         GameEvent::Render(action) => render(action),
                         GameEvent::Object(action) => {
                             match action {
-                                ObjectAction::Add { data } => {
-                                    let mut obj =
-                                        Object::create_cube_with(gl, programs.normal(), data)?;
-
-                                    // initial transformations if player
-                                    obj.transform_upt();
-
-                                    objects.write().insert(obj);
-                                }
+                                ObjectAction::Add { data } => objects.write().new_cube(
+                                    data.id,
+                                    InstanceKind::NormalCube,
+                                    Transformations::new(data.cam.eye, data.dim),
+                                    data.color.data(),
+                                    data.color.is_emit(),
+                                ),
                                 ObjectAction::Remove { id } => {
-                                    if let Some(obj) = objects.write().remove(id) {
-                                        free_buffers(gl, obj.buffers());
-                                    }
+                                    objects.write().remove(id);
                                 }
-                                ObjectAction::Upt { mut data } => {
+                                ObjectAction::Upt { data } => {
                                     if let Some(obj) = objects.write().get_mut(data.id) {
                                         if data.cam.is_modified() {
-                                            obj.cam.patch(&mut data.cam);
+                                            if let Some(pos) = data.cam.eye {
+                                                obj.trans.translation.translate(
+                                                    &(pos
+                                                        - obj
+                                                            .trans
+                                                            .translation
+                                                            .extract_translation()),
+                                                );
+                                            }
+
+                                            if let (Some(yaw), Some(pitch)) =
+                                                (data.cam.yaw, data.cam.pitch)
+                                            {
+                                                obj.trans.rotation =
+                                                    ultraviolet::Mat4::from_euler_angles(
+                                                        0.0,
+                                                        pitch.radians(),
+                                                        -yaw.radians(),
+                                                    )
+                                            }
+
+                                            // obj.cam.patch(&mut data.cam);
                                         }
                                         if let Some(dim) = data.dim {
-                                            obj.dim = dim
+                                            obj.trans.scale_upt(dim);
+                                            // obj.dim = dim
                                         }
-                                        obj.transform_upt();
+                                        obj.trans.model_upt();
                                     } else {
                                         error!("Object {} doesn't exist.", data.id)
                                     }
@@ -289,7 +306,7 @@ fn main() -> Result {
 
     // constructs/deconstructs the timer callback
     let fps_clone = fps.clone();
-    let mut timer_fps_cfg = |fps: u8| -> u8 {
+    let mut timer_fps_cfg = |fps: Id| -> Id {
         limit.set(fps);
         let prev = fps_clone.swap_target(fps);
 
@@ -314,75 +331,69 @@ fn main() -> Result {
 
     // TODO - please implement instanced-based rendering
     let objects = {
-        let mut raw = RawObjects::default();
+        let mut raw = RawObjects::new(&gl, &programs)?;
 
-        // basic 'light' structure
-        raw.new_light(
-            &gl,
-            programs.simple(),
-            -128,
-            ObjType::Basic,
-            Vec3::new(3.0, 0.0, -4.0),              // position
-            Vec3::new(0.5, 0.5, 0.5),               // dimensions
-            Color::new([0.2, 0.0, 1.0, 1.0], true), // color (emit: true)
-        )?;
-
-        // another basic 'light' structure
-        raw.new_light(
-            &gl,
-            programs.simple(),
-            -127,
-            ObjType::Basic,
-            Vec3::new(-3.0, 1.0, -4.5),             // position
-            Vec3::new(0.5, 0.5, 0.5),               // dimensions
-            Color::new([0.6, 1.0, 0.0, 1.0], true), // color (emit: true)
-        )?;
-
-        // basic 'land' structure
         raw.new_cube(
-            &gl,
-            programs.normal(),
-            -126,
-            ObjType::Basic,
-            Vec3::new(0.0, -2.0, 0.0),                // position
-            Vec3::new(7.5, 0.1, 7.5),                 // dimensions
-            Color::new([1.0, 0.5, 0.31, 0.9], false), // color (emit: false)
-        )?;
+            0,
+            InstanceKind::NormalCube,
+            Transformations::new([0.0, -2.0, 0.0], [7.5, 0.1, 7.5]),
+            [1.0, 1.0, 1.0, 0.9],
+            false,
+        );
+
+        raw.new_cube(
+            1,
+            InstanceKind::SimpleCube,
+            Transformations::new([3.0, 0.0, -4.0], [0.5, 0.5, 0.5]),
+            [0.0, 0.0, 1.0, 1.0],
+            true,
+        );
+
+        raw.new_cube(
+            2,
+            InstanceKind::SimpleCube,
+            Transformations::new([-3.0, 1.0, -4.5], [0.5, 0.5, 0.5]),
+            [1.0, 0.0, 0.0, 1.0],
+            true,
+        );
 
         // DEBUGGING - generate random cubes (none of this is instanced-based)
         let mut rng = rand::rng();
-        for id in -125..i8::MAX {
+        for id in 3..u8::MAX {
             let pos = Vec3::new(
                 if rng.random_bool(0.5) {
-                    rng.random_range(-1000.0..-50.0)
+                    rng.random_range(-10000.0..-3.0)
                 } else {
-                    rng.random_range(10.0..1000.0)
+                    rng.random_range(3.0..10000.0)
                 },
-                rng.random_range(-50.0..500.0),
+                rng.random_range(-10000.0..10000.0),
                 if rng.random_bool(0.5) {
-                    rng.random_range(-1000.0..-50.0)
+                    rng.random_range(-10000.0..-3.0)
                 } else {
-                    rng.random_range(50.0..1000.0)
+                    rng.random_range(3.0..10000.0)
                 },
             );
 
-            let dims = Vec3::new(
-                rng.random_range(0.1..50.0),
-                rng.random_range(0.1..50.0),
-                rng.random_range(0.1..50.0),
+            let dim = Vec3::new(
+                rng.random_range(1.0..20.0),
+                rng.random_range(1.0..20.0),
+                rng.random_range(1.0..20.0),
             );
 
-            let color = Color::new(
-                [
-                    rng.random_range(0.0..1.0),
-                    rng.random_range(0.0..1.0),
-                    rng.random_range(0.0..1.0),
-                    rng.random_range(0.01..0.1),
-                ],
+            let color = [
+                rng.random_range(0.0..1.0),
+                rng.random_range(0.0..1.0),
+                rng.random_range(0.0..1.0),
+                rng.random_range(0.1..1.0),
+            ];
+
+            raw.new_cube(
+                id as Id,
+                InstanceKind::SimpleCube,
+                Transformations::new(pos, dim),
+                color,
                 false,
             );
-
-            raw.new_cube(&gl, programs.normal(), id, ObjType::Basic, pos, dims, color)?;
         }
         Objects::new(raw)
     };
@@ -421,7 +432,6 @@ fn main() -> Result {
     // main thread
     if let Err(e) = process_raw_events(
         &gl,
-        &programs,
         window,
         &mut timer_fps_cfg,
         ep,
@@ -433,7 +443,7 @@ fn main() -> Result {
     }
 
     // clean everything up
-    clean_up(&gl, programs, objects.read().iter());
+    clean_up(&gl, programs, objects.read().buffers());
 
     Ok(())
 }

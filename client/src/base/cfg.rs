@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 pub struct Config {
     /// Specify the FPS.
     #[arg(long, default_value_t = 120)]
-    fps: u8,
+    fps: Id,
 
     /// Do not attempt to connect to server.
     #[arg(long, default_value_t)]
@@ -26,7 +26,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub const fn fps(&self) -> u8 {
+    pub const fn fps(&self) -> Id {
         self.fps
     }
 

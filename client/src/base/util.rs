@@ -201,19 +201,21 @@ pub fn init() -> Result<(
     ))
 }
 
-pub fn free_buffers(gl: &Context, buffers: Buffers) {
+pub fn free_buffers(gl: &Context, buffers: &ObjData) {
     unsafe {
         gl.delete_vertex_array(buffers.vao());
         gl.delete_buffer(buffers.vbo());
         gl.delete_buffer(buffers.ebo());
+        gl.delete_buffer(buffers.col_vbo());
+        gl.delete_buffer(buffers.inst_vbo());
     }
 }
 
-pub fn free_objects<'a>(gl: &Context, objects: impl Iterator<Item = &'a Object>) {
-    objects.for_each(|obj| free_buffers(gl, obj.buffers()));
+pub fn free_objects<'a>(gl: &Context, objects: impl Iterator<Item = &'a ObjData>) {
+    objects.for_each(|obj| free_buffers(gl, obj));
 }
 
-pub fn clean_up<'a>(gl: &Context, programs: Shaders, objects: impl Iterator<Item = &'a Object>) {
+pub fn clean_up<'a>(gl: &Context, programs: Shaders, objects: impl Iterator<Item = &'a ObjData>) {
     programs.delete(gl);
     free_objects(gl, objects);
 }

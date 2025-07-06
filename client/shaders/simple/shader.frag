@@ -1,8 +1,8 @@
 #version 460
 
-out vec4 frag_col;
+in vec4 obj_col;
 
-uniform vec4 obj_col;
+out vec4 frag_col;
 
 
 void main() {

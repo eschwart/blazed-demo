@@ -9,7 +9,7 @@ A client-server 3D renderer featuring real-time player movement and view synchro
 - back-face culling.
 
 ## Bugs
-- Seems to have a very difficult time processing input (keyboard/mouse) if there's too much being rendered.
+- When FPS is uncapped and there are many objects (thousands), keyboard input handling gets funky.
   - maybe a bottleneck with certain channels..
 - The server tends to fall apart with 3+ connections.
 - In-and-out clipping with translucent objects.

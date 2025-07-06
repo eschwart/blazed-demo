@@ -16,20 +16,24 @@ impl Color {
         Self { inner, emits }
     }
 
-    pub const fn is_emit(&self) -> bool {
-        self.emits == 1
+    pub const fn data(&self) -> [f32; 4] {
+        self.inner
     }
 
     pub const fn alpha(&self) -> f32 {
         self.inner[3]
     }
 
-    pub const fn is_opaque(alpha: f32) -> bool {
-        alpha as i32 == 1
+    pub const fn as_vec3(&self) -> Vec3 {
+        Vec3::new(self.inner[0], self.inner[1], self.inner[2])
     }
 
-    pub const fn data(&self) -> [f32; 4] {
-        self.inner
+    pub const fn is_emit(&self) -> bool {
+        self.emits == 1
+    }
+
+    pub const fn is_opaque(&self) -> bool {
+        self.alpha() as i32 == 1
     }
 }
 
@@ -53,11 +57,11 @@ pub struct Transformations {
 }
 
 impl Transformations {
-    pub fn new(pos: Vec3, dim: Vec3) -> Self {
-        let translation = Mat4::from_translation(pos);
+    pub fn new<T: Into<Vec3>>(pos: T, dim: T) -> Self {
+        let translation = Mat4::from_translation(pos.into());
         let rotation = Mat4::identity();
-        let scale = Mat4::from_nonuniform_scale(dim);
-        let model = Mat4::identity();
+        let scale = Mat4::from_nonuniform_scale(dim.into());
+        let model = translation * rotation * scale;
 
         Self {
             translation,
@@ -98,16 +102,6 @@ impl Transformations {
 
 impl Default for Transformations {
     fn default() -> Self {
-        let translation = Mat4::from_translation(Vec3::zero());
-        let rotation = Mat4::identity();
-        let scale = Mat4::from_nonuniform_scale(Vec3::one());
-        let model = Mat4::identity();
-
-        Self {
-            translation,
-            rotation,
-            scale,
-            model,
-        }
+        Self::new(Vec3::zero(), Vec3::one())
     }
 }

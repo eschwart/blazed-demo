@@ -1,118 +1,63 @@
 use crate::*;
 use crossbeam_channel::Receiver;
-use glow::{COLOR_BUFFER_BIT, Context, DEPTH_BUFFER_BIT, HasContext, NativeProgram};
+use glow::{ARRAY_BUFFER, COLOR_BUFFER_BIT, Context, DEPTH_BUFFER_BIT, HasContext, NativeProgram};
 use std::{
     io::{Write, stdout},
     sync::atomic::AtomicU16,
 };
 use sync_select::*;
 
-fn setup_simple_obj(
-    gl: &Context,
-    native: NativeProgram,
-    model: &[f32],
-    view: &[f32],
-    projection: &[f32],
-    obj_col: &[f32],
-) {
-    // model matrix
+fn setup_simple_obj(gl: &Context, program: NativeProgram, view: &[f32], projection: &[f32]) {
     unsafe {
+        // view matrix
         gl.uniform_matrix_4_f32_slice(
-            gl.get_uniform_location(native, "model").as_ref(),
-            false,
-            model,
-        )
-    };
-
-    // view matrix
-    unsafe {
-        gl.uniform_matrix_4_f32_slice(
-            gl.get_uniform_location(native, "view").as_ref(),
+            gl.get_uniform_location(program, "view").as_ref(),
             false,
             view,
-        )
-    };
+        );
 
-    // projection matrix
-    unsafe {
+        // projection matrix
         gl.uniform_matrix_4_f32_slice(
-            gl.get_uniform_location(native, "proj").as_ref(),
+            gl.get_uniform_location(program, "proj").as_ref(),
             false,
             projection,
         )
     };
-
-    // object color
-    unsafe { gl.uniform_4_f32_slice(gl.get_uniform_location(native, "obj_col").as_ref(), obj_col) };
 }
 
-fn setup_normal_obj(
+fn setup_normal_obj<'a>(
     gl: &Context,
-    native: NativeProgram,
+    program: NativeProgram,
     cam_pos: &[f32],
-    light_pos: &[f32],
-    light_col: &[f32],
-    index: usize,
+    lights: impl Iterator<Item = &'a (usize, (Vec3, Vec3))>,
+    lights_len: usize,
 ) {
-    // set specific indexed light_pos[i]
-    let light_name = format!("p_lights[{index}]");
-    let light_pos_name = format!("{light_name}.pos");
-    let light_col_name = format!("{light_name}.col");
-
-    // camera position
     unsafe {
-        let loc = gl.get_uniform_location(native, "cam_pos");
-        gl.uniform_3_f32_slice(loc.as_ref(), cam_pos);
+        // projection matrix
+        gl.uniform_3_f32_slice(
+            gl.get_uniform_location(program, "cam_pos").as_ref(),
+            cam_pos,
+        );
 
-        let loc = gl.get_uniform_location(native, &light_pos_name);
-        gl.uniform_3_f32_slice(loc.as_ref(), light_pos);
+        gl.uniform_1_i32(
+            gl.get_uniform_location(program, "p_lights_len").as_ref(),
+            lights_len as i32,
+        );
+    };
+    for (i, (pos, col)) in lights {
+        // set specific indexed light_pos[i]
+        let light_name = format!("p_lights[{i}]");
+        let light_pos_name = format!("{light_name}.pos");
+        let light_col_name = format!("{light_name}.col");
 
-        let loc = gl.get_uniform_location(native, &light_col_name);
-        gl.uniform_3_f32_slice(loc.as_ref(), light_col);
-    }
-}
-
-/// TODO - impl instanced rendering
-fn render_obj(
-    gl: &Context,
-    obj: &Object,
-    model: &[f32],
-    view: &[f32],
-    projection: &[f32],
-    cam_pos: &[f32],
-    lights: &[&Object],
-) {
-    // current program
-    let program = obj.program();
-    let native = program.native();
-    unsafe { gl.use_program(Some(native)) };
-
-    // every object inherits the attributes of a 'simple' shader
-    setup_simple_obj(gl, native, model, view, projection, &obj.color());
-
-    // 'normal' (ambient + diffuse + specular) shading
-    if program.kind() == ProgramUnit::Normal {
         unsafe {
-            let loc = gl.get_uniform_location(native, "p_lights_len");
-            gl.uniform_1_i32(loc.as_ref(), lights.len() as i32);
-        }
+            let loc = gl.get_uniform_location(program, &light_pos_name);
+            gl.uniform_3_f32_slice(loc.as_ref(), pos.as_slice());
 
-        for (i, light) in lights.iter().enumerate() {
-            let pos = light.cam.eye;
-            let light_pos = pos.as_slice();
-            let light_col = &light.color()[..3];
-            setup_normal_obj(gl, native, cam_pos, light_pos, light_col, i);
+            let loc = gl.get_uniform_location(program, &light_col_name);
+            gl.uniform_3_f32_slice(loc.as_ref(), col.as_slice());
         }
     }
-
-    // bind then render
-    // TODO - USE THE CALL FOR INSTANCED RENDERING
-    unsafe { gl.bind_vertex_array(Some(obj.vao())) };
-    unsafe { gl.draw_elements(obj.mode(), obj.len(), obj.element_type(), 0) };
-
-    // clean up
-    unsafe { gl.bind_vertex_array(None) };
-    unsafe { gl.use_program(None) };
 }
 
 /// RENDER EVERYTHING
@@ -126,38 +71,72 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
         // camera attributes
         let view = cam.view().as_slice();
         let projection = cam.projection().as_slice();
-        let cam_pos = cam.pos();
+        let cam_pos = cam.attr().eye;
         let cam_pos_slice = cam_pos.as_slice();
 
-        // light attributes
-        let lights = objects.lights().collect::<Vec<&Object>>();
+        // TODO - improve this.. (try not to collect everytime?)
+        let lights = objects
+            .lights()
+            .enumerate()
+            .collect::<Vec<(usize, (Vec3, Vec3))>>();
 
-        // render light objects first
-        for obj in lights.iter() {
-            let model = obj.tran().model();
-            render_obj(
-                gl,
-                obj,
-                model.as_slice(),
-                view,
-                projection,
-                cam_pos_slice,
-                &[],
-            );
-        }
+        // render each groups objects
+        for inst_group in objects.groups() {
+            let program = inst_group.program();
+            let native = program.native();
 
-        // then, render translucent objects (furthest to closest), then opaque objects
-        for obj in objects.translucent_sorted(*cam_pos).chain(objects.opaque()) {
-            let model = obj.tran().model();
-            render_obj(
-                gl,
-                obj,
-                model.as_slice(),
-                view,
-                projection,
-                cam_pos_slice,
-                lights.as_slice(),
+            gl.use_program(Some(native));
+
+            // view and proj
+            setup_simple_obj(gl, native, view, projection);
+
+            // D_Lights | P_Lights
+            if let ProgramUnit::Normal = program.kind() {
+                setup_normal_obj(gl, native, cam_pos_slice, lights.iter(), lights.len());
+            }
+
+            // TODO - improve this (only update transformations that have changed)
+            {
+                // gather all model matrices and color vectors for this group
+                let mut model_matrices: Vec<f32> =
+                    Vec::with_capacity(inst_group.instances().len() * 16);
+                let mut color_data: Vec<f32> = Vec::with_capacity(inst_group.instances().len() * 4);
+                for instance in inst_group.instances().iter() {
+                    model_matrices.extend_from_slice(instance.trans.model().as_slice());
+                    color_data.extend_from_slice(instance.color.data().as_slice());
+                }
+
+                // update color VBO
+                gl.bind_buffer(ARRAY_BUFFER, Some(inst_group.data().col_vbo()));
+                gl.buffer_data_u8_slice(
+                    ARRAY_BUFFER,
+                    bytemuck::cast_slice(&color_data),
+                    glow::DYNAMIC_DRAW,
+                );
+
+                // update instance VBO
+                gl.bind_buffer(ARRAY_BUFFER, Some(inst_group.data().inst_vbo()));
+                gl.buffer_data_u8_slice(
+                    ARRAY_BUFFER,
+                    bytemuck::cast_slice(&model_matrices),
+                    glow::DYNAMIC_DRAW,
+                );
+            }
+
+            // bind then render
+            gl.bind_vertex_array(Some(inst_group.data().vao()));
+            gl.draw_elements_instanced(
+                inst_group.data().mode(),
+                inst_group.data().len(),
+                inst_group.data().element_type(),
+                0,
+                inst_group.len() as i32,
             );
+
+            // clean up (is this required?)
+            gl.bind_vertex_array(None);
+            gl.bind_buffer(ARRAY_BUFFER, None);
+            gl.use_program(None);
         }
         // swap window
         window.gl_swap_window();

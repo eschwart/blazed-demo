@@ -6,7 +6,7 @@ use atomint::*;
 use std::time::Duration;
 use ultraviolet::Vec3;
 
-pub type Id = i8;
+pub type Id = u16;
 pub type AtomicId = <Id as AtomicInt>::Atomic;
 
 // TODO - tune this
