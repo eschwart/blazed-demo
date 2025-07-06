@@ -1,11 +1,11 @@
 #version 460
 
 in vec3 frag_pos;     // fragment position
+in vec4 obj_col;      // current object color
 in vec3 frag_norm;    // fragment normals
 
 out vec4 frag_col;    // fragment color
 
-uniform vec4 obj_col; // current object color
 uniform vec3 cam_pos; // camera's (eye) position
 
 // Directional-Light
@@ -14,9 +14,10 @@ struct D_Light {
     vec3 col; // color
 };
 
-#define D_LIGHTS_MAX 16                 // TODO - figure out if we can make this dynamic?
-uniform int d_lights_len;               // current number of directional lights
-uniform D_Light d_lights[D_LIGHTS_MAX]; // array of directional lights
+// TODO - not currently implemented in the engine
+// #define D_LIGHTS_MAX 16                 // TODO - figure out if we can make this dynamic?
+// uniform int d_lights_len;               // current number of directional lights
+// uniform D_Light d_lights[D_LIGHTS_MAX]; // array of directional lights
 
 // Point-Light
 struct P_Light {

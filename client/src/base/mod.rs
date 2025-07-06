@@ -109,7 +109,7 @@ pub enum GameEvent {
     Render(RenderAction),
     Object(ObjectAction),
     User(UserAction),
-    Fps(u8), // dynamically update FPS limit
+    Fps(Id), // dynamically update FPS limit
 }
 
 /// Event wrappers related to the backend.

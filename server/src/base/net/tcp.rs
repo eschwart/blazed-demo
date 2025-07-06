@@ -137,7 +137,7 @@ fn handle_incoming(
                         id,
                         kind: ObjType::Player,
                         dim: Vec3::new(1.0, 1.0, 1.0),
-                        color: Color::new([0.1, 0.6, 1.0, 1.0], false),
+                        color: Color::new([1.0, 1.0, 1.0, 1.0], false),
                         ..Default::default()
                     };
 

@@ -78,15 +78,5 @@ pub struct UptObj {
     #[wopt(optional, serde)]
     pub cam: CameraAttr,
     #[wopt(required)]
-    pub keys: Keys,
-}
-
-impl UptObj {
-    pub fn new(id: Id) -> Self {
-        Self {
-            id,
-            dim: Vec3::one(),
-            ..Default::default()
-        }
-    }
+    pub keys: Keys, // TODO - remove this
 }
