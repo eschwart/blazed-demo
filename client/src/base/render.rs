@@ -61,8 +61,6 @@ fn setup_normal_obj<'a>(
 }
 
 /// RENDER EVERYTHING
-///
-/// TODO - impl multiple lights
 pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObjects) {
     unsafe {
         gl.clear_color(0.4, 0.4, 0.4, 1.0);
