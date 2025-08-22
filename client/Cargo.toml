@@ -16,7 +16,7 @@ env_logger = { workspace = true }
 glow = "0.16.0"
 log = { workspace = true }
 ordered-float = "5.0.0"
-pfrs = "0.1.2"
+pfrs = "0.1.3"
 rand = { workspace = true }
 sdl2 = { version = "0.37.0", features = ["bundled", "static-link"] }
 sync_select = { workspace = true }
