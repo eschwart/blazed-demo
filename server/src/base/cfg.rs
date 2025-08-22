@@ -2,7 +2,7 @@ use crate::*;
 use clap::Parser;
 use std::{num::ParseIntError, time::Duration};
 
-/// Calculates the duration of a single tick.
+/// Calculates the duration of a single game tick.
 fn parse_tps(s: &str) -> Result<Duration, ParseIntError> {
     s.parse::<u64>()
         .map(|tps| Duration::from_secs_f32(1.0 / tps as f32))
