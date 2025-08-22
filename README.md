@@ -17,7 +17,7 @@ A client-server 3D renderer featuring real-time player movement and view synchro
 
 ## Todo
 1. Improve documentation (severely).
-2. Implement instanced-based rendering.
+2. ~~Implement instanced-based rendering.~~ (always room for improvement)
 3. Implement culling techniques (frustrum & occlusion).
 4. Implement [AABB](https://developer.mozilla.org/en-US/docs/Games/Techniques/3D_collision_detection)-based collision (look into [kiddo](https://crates.io/crates/kiddo)).
 5. Implement client-side server interpolation.
