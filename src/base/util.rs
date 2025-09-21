@@ -1,4 +1,4 @@
-use std::{mem::size_of, slice::from_raw_parts, time::Duration};
+use std::time::Duration;
 
 #[inline(always)]
 pub fn clamp_unchecked(value: f32, min: f32, max: f32) -> f32 {
@@ -9,11 +9,6 @@ pub fn clamp_unchecked(value: f32, min: f32, max: f32) -> f32 {
     } else {
         value
     }
-}
-
-#[inline(always)]
-pub const fn cast_u16_slice(data: &[u16]) -> &[u8] {
-    unsafe { from_raw_parts(data.as_ptr() as *const u8, data.len() * size_of::<u16>()) }
 }
 
 /// the duration of a single interval based on the given rate.
