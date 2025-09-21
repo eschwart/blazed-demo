@@ -1,11 +1,18 @@
 use crate::*;
 use clap::Parser;
-use std::{num::ParseIntError, time::Duration};
+use std::time::Duration;
 
 /// Calculates the duration of a single game tick.
-fn parse_tps(s: &str) -> Result<Duration, ParseIntError> {
-    s.parse::<u64>()
-        .map(|tps| Duration::from_secs_f32(1.0 / tps as f32))
+fn parse_tps(s: &str) -> Result<Duration> {
+    let tps = s.parse::<u64>()?;
+
+    if tps == 0 {
+        return Err("TPS must be greater than zero.".into());
+    } else if tps > 1024 {
+        return Err("TPS must be less than or equal to 1024.".into());
+    }
+    let delay = Duration::from_secs_f32(1.0 / tps as f32);
+    Ok(delay)
 }
 
 #[derive(Parser, Debug)]
