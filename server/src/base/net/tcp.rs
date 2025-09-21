@@ -90,8 +90,12 @@ fn handle_alive(
     })
 }
 
-fn handle_dist(s: &SyncSelect, clients_tcp: TcpClients, receiver_packet: Receiver<Packet>) {
-    s.spawn(move || -> Result {
+fn handle_dist(
+    s: &SyncSelect,
+    clients_tcp: TcpClients,
+    receiver_packet: Receiver<Packet>,
+) -> JoinHandle<Result> {
+    s.spawn(move || {
         loop {
             let packet = receiver_packet.recv()?;
 
@@ -100,7 +104,7 @@ fn handle_dist(s: &SyncSelect, clients_tcp: TcpClients, receiver_packet: Receive
                 tcp.send(&packet)?;
             }
         }
-    });
+    })
 }
 
 fn handle_incoming(
@@ -112,8 +116,8 @@ fn handle_incoming(
     receiver_addr: Receiver<SocketAddr>,
     updates: Updates,
     id: Arc<AtomicId>,
-) {
-    s.spawn(move || -> Result {
+) -> JoinHandle<Result> {
+    s.spawn(move || {
         for tcp in tcp_listener.incoming() {
             // the client's tcp address
             let addr_tcp = tcp.peer_addr()?;
@@ -171,7 +175,7 @@ fn handle_incoming(
             }
         }
         unreachable!()
-    });
+    })
 }
 
 pub fn init_tcp(
@@ -185,21 +189,17 @@ pub fn init_tcp(
     updates: Updates,
     id: Arc<AtomicId>,
 ) {
-    s.spawn_with(move |s| -> Result {
-        handle_incoming(
-            s,
-            tcp,
-            clients_tcp.clone(),
-            clients_udp,
-            sender_packet,
-            receiver_addr,
-            updates,
-            id,
-        );
+    handle_incoming(
+        s,
+        tcp,
+        clients_tcp.clone(),
+        clients_udp,
+        sender_packet,
+        receiver_addr,
+        updates,
+        id,
+    );
 
-        // init TCP distribution thread
-        handle_dist(s, clients_tcp, receiver_packet);
-
-        Ok(())
-    });
+    // init TCP distribution thread
+    handle_dist(s, clients_tcp, receiver_packet);
 }

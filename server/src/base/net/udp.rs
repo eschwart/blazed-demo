@@ -204,8 +204,8 @@ fn handle_incoming(
     clients_udp: UdpClients,
     sender_packet: Sender<(Packet, SocketAddr)>,
     sender_addr: Sender<SocketAddr>,
-) {
-    s.spawn(move || -> Result {
+) -> JoinHandle<Result> {
+    s.spawn(move || {
         let mut buf = [0; PACKET_SIZE];
 
         loop {
@@ -244,7 +244,7 @@ fn handle_incoming(
                 }
             }
         }
-    });
+    })
 }
 
 pub fn init_udp(
@@ -258,20 +258,16 @@ pub fn init_udp(
     // real-time game data channel
     let (sender_packet, receiver_packet) = bounded(8);
 
-    s.spawn_with(move |s| -> Result {
-        // handle outgoing
-        init_write(
-            s,
-            udp.clone(),
-            clients_udp.clone(),
-            receiver_packet,
-            updates,
-            tps,
-        );
+    // handle outgoing
+    init_write(
+        s,
+        udp.clone(),
+        clients_udp.clone(),
+        receiver_packet,
+        updates,
+        tps,
+    );
 
-        // handle incoming UDP packets
-        handle_incoming(s, udp.clone(), clients_udp, sender_packet, sender_addr);
-
-        Ok(())
-    });
+    // handle incoming UDP packets
+    handle_incoming(s, udp.clone(), clients_udp, sender_packet, sender_addr);
 }
