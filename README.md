@@ -1,14 +1,20 @@
 # blazed-demo
 
-A client-server 3D renderer featuring real-time player movement and view synchronization within a dynamic n-tick rate system. Built with [Rust](https://www.rust-lang.org/) using [OpenGL](https://crates.io/crates/glow) and [SDL2](https://crates.io/crates/sdl2).
+A fast 3D first-person multiplayer renderer built entirely in Rust with performance as its core focus.
+Built with [Rust](https://www.rust-lang.org/) using [OpenGL](https://crates.io/crates/glow) and [SDL2](https://crates.io/crates/sdl2).
 
 ## Features
-- n-tick rate server (default: 128).
-- multiplayer (capacity: $\infty$).
+- full body *translation* (up, down, left, right, forward, back) and *rotation* (yaw, pitch)
+- n-tick rate (TPS) server (min: 1, max: 1024, default: 128).
+- multiplayer (insecure)
+
+## Graphics
+- instance-based rendering (currently 2 groups).
 - basic lighting (ambient + diffuse + specular).
-- back-face culling.
+- back-face culling (more to be implemented).
 
 ## Bugs
+- Multiplayer is incredibly buggy (mostly just buggy movement).
 - When FPS is uncapped and there are many objects (thousands), keyboard input handling gets funky.
   - maybe a bottleneck with certain channels..
 - The server tends to fall apart with 3+ connections.
@@ -16,11 +22,12 @@ A client-server 3D renderer featuring real-time player movement and view synchro
   - preventing object clipping (collision) entirely (objects inside one another) might fix this.
 
 ## Todo
-1. Improve documentation (severely).
-2. ~~Implement instanced-based rendering.~~ (always room for improvement)
+1. Add/improve documentation.
+2. Stabilize `server` (entire multiplayer impl).
 3. Implement culling techniques (frustrum & occlusion).
 4. Implement [AABB](https://developer.mozilla.org/en-US/docs/Games/Techniques/3D_collision_detection)-based collision (look into [kiddo](https://crates.io/crates/kiddo)).
 5. Implement client-side server interpolation.
+6. Improve instanced-based rendering.
 
 ## Development
 Retrieve the repository:
@@ -42,7 +49,7 @@ cargo r --release --manifest-path server\Cargo.toml
 ## Additional Usage
 **Client**
 ```rs
-Usage: client.exe [OPTIONS]
+Usage: client [OPTIONS]
 
 Options:
       --fps <FPS>                          Specify the FPS [default: 120]
@@ -55,7 +62,7 @@ Options:
 
 **Server**
 ```rs
-Usage: server.exe [OPTIONS]
+Usage: server [OPTIONS]
 
 Options:
   -t, --tcp-addr <TCP_ADDR>  Local TCP IP address [default: 127.0.0.1:54269]
