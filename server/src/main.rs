@@ -13,13 +13,12 @@ use sync_select::*;
 pub type TcpClients = Arc<RwLock<HashMap<Id, TcpClient>>>;
 pub type UdpClients = Arc<RwLock<HashMap<SocketAddr, UptObj>>>;
 pub type Updates = Arc<Mutex<HashMap<SocketAddr, UptObjOpt>>>;
+pub type Packet = Vec<u8>;
 
 fn handle_ctrlc(s: &SyncSelect) -> Result {
     let thread = s.thread();
     ctrlc::set_handler(move || thread.unpark()).map_err(Into::into)
 }
-
-pub type Packet = Vec<u8>;
 
 fn main() -> Result {
     env_logger::init();
