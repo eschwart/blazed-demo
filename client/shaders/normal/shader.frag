@@ -1,4 +1,4 @@
-#version 460
+#version 460 core
 
 in vec3 frag_pos;     // fragment position
 in vec4 obj_col;      // current object color
@@ -7,17 +7,6 @@ in vec3 frag_norm;    // fragment normals
 out vec4 frag_col;    // fragment color
 
 uniform vec3 cam_pos; // camera's (eye) position
-
-// Directional-Light
-struct D_Light {
-    vec3 dir; // direction
-    vec3 col; // color
-};
-
-// TODO - not currently implemented in the engine
-// #define D_LIGHTS_MAX 16                 // TODO - figure out if we can make this dynamic?
-// uniform int d_lights_len;               // current number of directional lights
-// uniform D_Light d_lights[D_LIGHTS_MAX]; // array of directional lights
 
 // Point-Light
 struct P_Light {
@@ -68,44 +57,33 @@ float get_attenuation(vec3 frag_to_light) {
     return clamp(att, 0.0, 1.0);
 }
 
-vec3 calc_ads(vec3 light_dir, vec3 frag_pos, vec3 frag_norm, vec3 col) {
+vec3 calc_ads(vec3 light_dir, vec3 frag_pos, vec3 frag_norm, vec3 light_col) {
     // ambient
-    vec3 ambient = get_ambient(0.2, col);
+    vec3 ambient = get_ambient(0.2, light_col);
 
     // diffuse
-    vec3 diffuse = get_diffuse(frag_norm, light_dir, col);
+    vec3 diffuse = get_diffuse(frag_norm, light_dir, light_col);
+    diffuse *= obj_col.rgb; // add the object's color
 
     // specular
-    vec3 specular = get_specular(0.5, frag_pos, frag_norm, light_dir, col);
+    vec3 specular = get_specular(0.2, frag_pos, frag_norm, light_dir, light_col);
 
     return ambient + diffuse + specular;
 }
 
-/// standard directional-light
-vec3 calc_dir_light(D_Light light) {
-    vec3 dir = light.dir;
-    vec3 col = light.col;
-
-    // direction towards light from fragment position
-    vec3 light_dir = normalize(-dir);
-
-    // ambient + diffuse + specular
-    return calc_ads(light_dir, frag_pos, frag_norm, col);
-}
-
 /// standard point-light
 vec3 calc_point_light(P_Light light) {
-    vec3 pos = light.pos;
-    vec3 col = light.col;
+    vec3 light_pos = light.pos;
+    vec3 light_col = light.col;
 
     // difference between light and fragment vectors
-    vec3 frag_to_light = pos - frag_pos;
+    vec3 frag_to_light = light_pos - frag_pos;
 
     // direction towards light from fragment position
     vec3 light_dir = normalize(frag_to_light);
 
     // ambient + diffuse + specular
-    vec3 ads = calc_ads(light_dir, frag_pos, frag_norm, col);
+    vec3 ads = calc_ads(light_dir, frag_pos, frag_norm, light_col);
 
     // attenuation
     float att = get_attenuation(frag_to_light);
@@ -114,18 +92,11 @@ vec3 calc_point_light(P_Light light) {
 }
 
 void main() {
-    vec3 lighting = vec3(0.0, 0.0, 0.0);
-
-    // add a directional light to the mix (arbitrary, for now)
-    lighting += calc_dir_light(D_Light(vec3(-1.0, -0.2, 0.2), vec3(0.2, 0.2, 0.15)));
+    vec3 rgb = vec3(0.0, 0.0, 0.0);
 
     // do the same for all point lights
     for (int i = 0; i < p_lights_len; i++)
-        lighting += calc_point_light(p_lights[i]);
+        rgb += calc_point_light(p_lights[i]);
 
-    // putting everything together
-    vec3 rgb = lighting * obj_col.rgb;
-    float alpha = obj_col.a;
-
-    frag_col = vec4(rgb, alpha);
+    frag_col = vec4(rgb, obj_col.a);
 }
