@@ -1,61 +1,46 @@
 use crate::*;
 use crossbeam_channel::Receiver;
-use glow::{ARRAY_BUFFER, COLOR_BUFFER_BIT, Context, DEPTH_BUFFER_BIT, HasContext, NativeProgram};
+use glow::{ARRAY_BUFFER, COLOR_BUFFER_BIT, Context, DEPTH_BUFFER_BIT, HasContext};
 use std::{
     io::{Write, stdout},
     sync::atomic::AtomicU16,
 };
 use sync_select::*;
 
-fn setup_simple_obj(gl: &Context, program: NativeProgram, view: &[f32], projection: &[f32]) {
+fn setup_simple_obj(gl: &Context, prog: Program, view: &[f32], proj: &[f32]) {
     unsafe {
         // view matrix
-        gl.uniform_matrix_4_f32_slice(
-            gl.get_uniform_location(program, "view").as_ref(),
-            false,
-            view,
-        );
+        gl.program_uniform_matrix_4_f32_slice(prog.native(), prog.unif_locs().view(), false, view);
 
         // projection matrix
-        gl.uniform_matrix_4_f32_slice(
-            gl.get_uniform_location(program, "proj").as_ref(),
-            false,
-            projection,
-        )
+        gl.program_uniform_matrix_4_f32_slice(prog.native(), prog.unif_locs().proj(), false, proj)
     };
 }
 
 fn setup_normal_obj<'a>(
     gl: &Context,
-    program: NativeProgram,
+    prog: Program,
     cam_pos: &[f32],
     lights: impl Iterator<Item = &'a (usize, (Vec3, Vec3))>,
     lights_len: usize,
 ) {
     unsafe {
         // projection matrix
-        gl.uniform_3_f32_slice(
-            gl.get_uniform_location(program, "cam_pos").as_ref(),
-            cam_pos,
-        );
+        gl.program_uniform_3_f32_slice(prog.native(), prog.unif_locs().cam_pos(), cam_pos);
 
-        gl.uniform_1_i32(
-            gl.get_uniform_location(program, "p_lights_len").as_ref(),
+        // number of point lights
+        gl.program_uniform_1_i32(
+            prog.native(),
+            prog.unif_locs().p_lights_len(),
             lights_len as i32,
         );
     };
+    let p_lights_idxs = prog.unif_locs().p_lights();
     for (i, (pos, col)) in lights {
-        // set specific indexed light_pos[i]
-        let light_name = format!("p_lights[{i}]");
-        let light_pos_name = format!("{light_name}.pos");
-        let light_col_name = format!("{light_name}.col");
-
+        let [pos_idx, col_idx] = p_lights_idxs[*i];
         unsafe {
-            let loc = gl.get_uniform_location(program, &light_pos_name);
-            gl.uniform_3_f32_slice(loc.as_ref(), pos.as_slice());
-
-            let loc = gl.get_uniform_location(program, &light_col_name);
-            gl.uniform_3_f32_slice(loc.as_ref(), col.as_slice());
+            gl.program_uniform_3_f32_slice(prog.native(), pos_idx.as_ref(), pos.as_slice());
+            gl.program_uniform_3_f32_slice(prog.native(), col_idx.as_ref(), col.as_slice());
         }
     }
 }
@@ -80,17 +65,15 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
 
         // render each groups objects
         for inst_group in objects.groups() {
-            let program = inst_group.program();
-            let native = program.native();
-
-            gl.use_program(Some(native));
+            let prog = inst_group.program();
+            gl.use_program(Some(prog.native())); // still required
 
             // view and proj
-            setup_simple_obj(gl, native, view, projection);
+            setup_simple_obj(gl, prog, view, projection);
 
             // D_Lights | P_Lights
-            if let ProgramKind::Normal = program.kind() {
-                setup_normal_obj(gl, native, cam_pos_slice, lights.iter(), lights.len());
+            if let ProgramKind::Normal = prog.kind() {
+                setup_normal_obj(gl, prog, cam_pos_slice, lights.iter(), lights.len());
             }
 
             // TODO - improve this (only update transformations that have changed)
@@ -103,7 +86,6 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
                     model_matrices.extend_from_slice(instance.trans.model().as_slice());
                     color_data.extend_from_slice(instance.color.data().as_slice());
                 }
-
                 // update color VBO
                 gl.bind_buffer(ARRAY_BUFFER, Some(inst_group.data().col_vbo()));
                 gl.buffer_data_u8_slice(
@@ -120,7 +102,6 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
                     glow::DYNAMIC_DRAW,
                 );
             }
-
             // bind then render
             gl.bind_vertex_array(Some(inst_group.data().vao()));
             gl.draw_elements_instanced(
@@ -131,10 +112,13 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
                 inst_group.len() as i32,
             );
 
-            // clean up (is this required?)
-            gl.bind_vertex_array(None);
-            gl.bind_buffer(ARRAY_BUFFER, None);
-            gl.use_program(None);
+            // not necessary with the current implementation
+            #[cfg(debug_assertions)]
+            {
+                gl.use_program(None);
+                gl.bind_vertex_array(None);
+                gl.bind_buffer(ARRAY_BUFFER, None);
+            }
         }
         // swap window
         window.gl_swap_window();
