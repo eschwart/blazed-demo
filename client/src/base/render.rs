@@ -89,7 +89,7 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
             setup_simple_obj(gl, native, view, projection);
 
             // D_Lights | P_Lights
-            if let ProgramUnit::Normal = program.kind() {
+            if let ProgramKind::Normal = program.kind() {
                 setup_normal_obj(gl, native, cam_pos_slice, lights.iter(), lights.len());
             }
 
