@@ -1,8 +1,8 @@
-#version 460
+#version 460 core
 
-in vec3 pos;
-in vec4 col;
-in mat4 model;
+layout(location = 0) in vec3 pos;
+layout(location = 1) in vec4 col;
+layout(location = 2) in mat4 model; // takes up 4
 
 out vec3 frag_pos;
 out vec4 obj_col;
