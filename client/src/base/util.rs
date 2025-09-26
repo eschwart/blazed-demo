@@ -1,7 +1,7 @@
 use crate::*;
 use glow::{
     BLEND, CULL_FACE, Context, DEPTH_TEST, FRAGMENT_SHADER, HasContext, LESS, NativeProgram,
-    ONE_MINUS_SRC_ALPHA, SRC_ALPHA, VERTEX_SHADER,
+    NativeUniformLocation, ONE_MINUS_SRC_ALPHA, SRC_ALPHA, VERTEX_SHADER,
 };
 use sdl2::{
     EventPump, EventSubsystem, Sdl, VideoSubsystem,
@@ -15,23 +15,91 @@ pub enum ProgramKind {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Program {
-    native: NativeProgram,
-    kind: ProgramKind,
+pub struct UnifLocs {
+    view: Option<NativeUniformLocation>,
+    proj: Option<NativeUniformLocation>,
+    cam_pos: Option<NativeUniformLocation>,
+    p_lights_len: Option<NativeUniformLocation>,
+    p_lights: [[Option<NativeUniformLocation>; 2]; 16],
 }
 
-impl Program {
-    pub const fn simple(native: NativeProgram) -> Self {
-        Self {
-            native,
-            kind: ProgramKind::Simple,
+impl UnifLocs {
+    pub fn new(gl: &Context, native: NativeProgram) -> Self {
+        unsafe {
+            let view = gl.get_uniform_location(native, "view");
+            let proj = gl.get_uniform_location(native, "proj");
+            let cam_pos = gl.get_uniform_location(native, "cam_pos");
+            let p_lights_len = gl.get_uniform_location(native, "p_lights_len");
+
+            let p_lights_dyn = (0..16)
+                .map(|i| {
+                    // set specific indexed light_pos[i]
+                    let light_name = format!("p_lights[{i}]");
+                    let light_pos_name = format!("{light_name}.pos");
+                    let light_col_name = format!("{light_name}.col");
+
+                    let pos_idx = gl.get_uniform_location(native, &light_pos_name);
+                    let col_idx = gl.get_uniform_location(native, &light_col_name);
+
+                    [pos_idx, col_idx]
+                })
+                .collect::<Vec<_>>();
+
+            // SAFETY - currently always 16 (in the shader)
+            let p_lights = p_lights_dyn.try_into().unwrap();
+
+            Self {
+                view,
+                proj,
+                cam_pos,
+                p_lights_len,
+                p_lights,
+            }
         }
     }
 
-    pub const fn normal(native: NativeProgram) -> Self {
+    pub const fn view(&self) -> Option<&NativeUniformLocation> {
+        self.view.as_ref()
+    }
+
+    pub const fn proj(&self) -> Option<&NativeUniformLocation> {
+        self.proj.as_ref()
+    }
+
+    pub const fn cam_pos(&self) -> Option<&NativeUniformLocation> {
+        self.cam_pos.as_ref()
+    }
+
+    pub const fn p_lights_len(&self) -> Option<&NativeUniformLocation> {
+        self.p_lights_len.as_ref()
+    }
+
+    pub const fn p_lights(&self) -> &[[Option<NativeUniformLocation>; 2]] {
+        self.p_lights.as_slice()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Program {
+    native: NativeProgram,
+    kind: ProgramKind,
+    unif_locs: UnifLocs,
+}
+
+impl Program {
+    pub fn simple(gl: &Context, native: NativeProgram) -> Self {
+        Self {
+            native,
+            kind: ProgramKind::Simple,
+            unif_locs: UnifLocs::new(gl, native),
+        }
+    }
+
+    pub fn normal(gl: &Context, native: NativeProgram) -> Self {
         Self {
             native,
             kind: ProgramKind::Normal,
+            unif_locs: UnifLocs::new(gl, native),
         }
     }
 
@@ -41,6 +109,10 @@ impl Program {
 
     pub const fn kind(&self) -> ProgramKind {
         self.kind
+    }
+
+    pub fn unif_locs(&self) -> &UnifLocs {
+        &self.unif_locs
     }
 }
 
@@ -150,8 +222,8 @@ pub fn init_shaders(gl: &Context) -> Result<Shaders> {
     let simple_prog = process_shaders(gl, simple_shader_sources)?;
     let normal_prog = process_shaders(gl, normal_shader_sources)?;
 
-    let simple = Program::simple(simple_prog);
-    let normal = Program::normal(normal_prog);
+    let simple = Program::simple(gl, simple_prog);
+    let normal = Program::normal(gl, normal_prog);
 
     let shaders = Shaders { simple, normal };
     Ok(shaders)
