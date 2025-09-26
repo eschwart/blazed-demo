@@ -1,4 +1,4 @@
-#version 460
+#version 460 core
 
 in vec4 obj_col;
 
