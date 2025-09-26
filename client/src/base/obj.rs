@@ -1,4 +1,5 @@
 use crate::*;
+use core::mem::size_of;
 use glow::{
     Context, HasContext, NativeBuffer, NativeVertexArray, TRIANGLE_STRIP, TRIANGLES, UNSIGNED_BYTE,
 };
@@ -62,16 +63,24 @@ mod cube {
 
     fn init<F>(
         gl: &glow::Context,
+        program: Program,
         vertices: &[f32],
         indices: &[u8],
         setup_vertex_attributes: F,
         primitive_mode: u32,
-        first_instance_attrib: u32,
     ) -> Result<ObjData>
     where
         F: Fn(&glow::Context),
     {
         unsafe {
+            let col_idx = gl
+                .get_attrib_location(program.native(), "col")
+                .ok_or("'in vec4 col' doesn't exist.")?;
+
+            let model_idx = gl
+                .get_attrib_location(program.native(), "model")
+                .ok_or("'in mat4 model' doesn't exist.")?;
+
             let vao = gl.create_vertex_array()?;
             let vbo = gl.create_buffer()?;
             let ebo = gl.create_buffer()?;
@@ -82,6 +91,7 @@ mod cube {
 
             // Vertex buffer
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+
             gl.buffer_data_u8_slice(
                 glow::ARRAY_BUFFER,
                 bytemuck::cast_slice(vertices),
@@ -93,25 +103,29 @@ mod cube {
 
             // Element buffer
             gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ebo));
-            gl.buffer_data_u8_slice(
-                glow::ELEMENT_ARRAY_BUFFER,
-                bytemuck::cast_slice(indices),
-                glow::STATIC_DRAW,
-            );
+            gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, indices, glow::STATIC_DRAW);
 
             // Color buffer (per-instance)
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(col_vbo));
             gl.buffer_data_size(glow::ARRAY_BUFFER, 0, glow::DYNAMIC_DRAW);
-            gl.enable_vertex_attrib_array(1);
-            gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, 4 * size_of::<f32>() as i32, 0);
-            gl.vertex_attrib_divisor(1, 1);
+            gl.enable_vertex_attrib_array(col_idx);
+            gl.vertex_attrib_pointer_f32(
+                col_idx,
+                4,
+                glow::FLOAT,
+                false,
+                4 * size_of::<f32>() as i32,
+                0,
+            );
+            gl.vertex_attrib_divisor(col_idx, 1);
 
             // Instance model matrices (per-instance)
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(inst_vbo));
             gl.buffer_data_size(glow::ARRAY_BUFFER, 0, glow::DYNAMIC_DRAW);
             let mat4_stride = 16 * size_of::<f32>() as i32;
+
             for i in 0..4 {
-                let attrib_index = first_instance_attrib + i;
+                let attrib_index = model_idx + i;
                 gl.enable_vertex_attrib_array(attrib_index);
                 gl.vertex_attrib_pointer_f32(
                     attrib_index,
@@ -119,7 +133,7 @@ mod cube {
                     glow::FLOAT,
                     false,
                     mat4_stride,
-                    (i * 16) as i32,
+                    (i as usize * 4 * size_of::<f32>()) as i32,
                 );
                 gl.vertex_attrib_divisor(attrib_index, 1);
             }
@@ -137,7 +151,7 @@ mod cube {
                 inst_vbo,
                 mode: primitive_mode,
                 element_type: UNSIGNED_BYTE,
-                len: indices.len() as i32, // Consider removing this
+                len: indices.len() as i32, // consider removing this
             })
         }
     }
@@ -166,15 +180,21 @@ mod cube {
             0, 1, 4, 5, 6, 1, 3, 0, 2, 4, 7, 6, 2, 3
         ];
 
-        pub fn init(gl: &glow::Context) -> Result<ObjData> {
+        pub fn init(gl: &glow::Context, program: Program) -> Result<ObjData> {
+            let pos_idx = unsafe {
+                gl.get_attrib_location(program.native(), "pos")
+                    .ok_or("'in vec3 pos' doesn't exist.")?
+            };
+
             super::init(
                 gl,
-                &cube::simple::VERTICES,
-                &cube::simple::INDICES,
+                program,
+                &VERTICES,
+                &INDICES,
                 |gl| unsafe {
                     gl.enable_vertex_attrib_array(0);
                     gl.vertex_attrib_pointer_f32(
-                        0,
+                        pos_idx,
                         3,
                         glow::FLOAT,
                         false,
@@ -183,7 +203,6 @@ mod cube {
                     );
                 },
                 TRIANGLE_STRIP,
-                2,
             )
         }
     }
@@ -254,16 +273,29 @@ mod cube {
             22, 23, 20,   20, 23, 21,
         ];
 
-        pub fn init(gl: &glow::Context) -> Result<ObjData> {
+        pub fn init(gl: &glow::Context, program: Program) -> Result<ObjData> {
+            let (pos_idx, norm_idx) = unsafe {
+                let pos_idx = gl
+                    .get_attrib_location(program.native(), "pos")
+                    .ok_or("'in vec3 pos' doesn't exist.")?;
+
+                let norm_idx = gl
+                    .get_attrib_location(program.native(), "norm")
+                    .ok_or("'in vec3 norm' doesn't exist.")?;
+
+                (pos_idx, norm_idx)
+            };
+
             super::init(
                 gl,
-                &cube::normal::VERTICES,
-                &cube::normal::INDICES,
+                program,
+                &VERTICES,
+                &INDICES,
                 |gl| unsafe {
                     // Position
-                    gl.enable_vertex_attrib_array(0);
+                    gl.enable_vertex_attrib_array(pos_idx);
                     gl.vertex_attrib_pointer_f32(
-                        0,
+                        pos_idx,
                         3,
                         glow::FLOAT,
                         false,
@@ -271,9 +303,9 @@ mod cube {
                         0,
                     );
                     // Normal
-                    gl.enable_vertex_attrib_array(2);
+                    gl.enable_vertex_attrib_array(norm_idx);
                     gl.vertex_attrib_pointer_f32(
-                        2,
+                        norm_idx,
                         3,
                         glow::FLOAT,
                         false,
@@ -282,7 +314,6 @@ mod cube {
                     );
                 },
                 TRIANGLES,
-                3,
             )
         }
     }
@@ -337,21 +368,23 @@ impl RawObjects {
     pub fn new(gl: &Context, shaders: &Shaders) -> Result<Self> {
         let mut groups = HashMap::default();
 
+        let program = shaders.simple();
         groups.insert(
             InstanceKind::SimpleCube,
             InstancedGroup {
                 instances: vec![],
-                program: shaders.simple(),
-                data: cube::simple::init(gl)?,
+                program,
+                data: cube::simple::init(gl, program)?,
             },
         );
 
+        let program = shaders.normal();
         groups.insert(
             InstanceKind::NormalCube,
             InstancedGroup {
                 instances: vec![],
-                program: shaders.normal(),
-                data: cube::normal::init(gl)?,
+                program,
+                data: cube::normal::init(gl, program)?,
             },
         );
 
@@ -423,17 +456,13 @@ impl RawObjects {
     }
 
     /// Iterator over all instance data in opaque groups
-    pub fn opaque(&self) -> impl Iterator<Item = &InstanceData> {
-        self.groups
-            .values()
-            .flat_map(|g| g.instances.iter().filter(|o| o.color.is_opaque()))
+    pub fn opaque(&self) -> ! {
+        unimplemented!()
     }
 
     /// Iterator over all instance data in translucent groups
-    pub fn translucent(&self) -> impl Iterator<Item = &InstanceData> {
-        self.groups
-            .values()
-            .flat_map(|g| g.instances.iter().filter(|o| !o.color.is_opaque()))
+    pub fn translucent(&self) -> ! {
+        unimplemented!()
     }
 
     /// Iterator over lights
@@ -458,10 +487,10 @@ impl RawObjects {
 
     /// Total number of instances (opaque + translucent)
     pub fn len(&self) -> usize {
-        self.groups.values().map(|g| g.instances.len()).sum()
+        unimplemented!()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        unimplemented!()
     }
 }
