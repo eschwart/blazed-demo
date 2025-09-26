@@ -337,7 +337,7 @@ fn main() -> Result {
             0,
             InstanceKind::NormalCube,
             Transformations::new([0.0, -2.0, 0.0], [7.5, 0.1, 7.5]),
-            [1.0, 1.0, 1.0, 0.9],
+            [1.0, 1.0, 1.0, 0.96],
             false,
         );
 
@@ -352,25 +352,41 @@ fn main() -> Result {
         raw.new_cube(
             2,
             InstanceKind::SimpleCube,
+            Transformations::new([0.0, 2.0, 8.5], [0.5, 0.5, 0.5]),
+            [0.0, 1.0, 0.0, 1.0],
+            true,
+        );
+
+        raw.new_cube(
+            3,
+            InstanceKind::SimpleCube,
             Transformations::new([-3.0, 1.0, -4.5], [0.5, 0.5, 0.5]),
             [1.0, 0.0, 0.0, 1.0],
             true,
         );
 
+        raw.new_cube(
+            4,
+            InstanceKind::SimpleCube,
+            Transformations::new([0.0, 20.0, 0.0], [0.5, 0.5, 0.5]),
+            [1.0, 1.0, 1.0, 1.0],
+            true,
+        );
+
         // DEBUGGING - generate random cubes (none of this is instanced-based)
         let mut rng = rand::rng();
-        for id in 3..u8::MAX {
+        for id in 5..u8::MAX {
             let pos = Vec3::new(
                 if rng.random_bool(0.5) {
-                    rng.random_range(-10000.0..-3.0)
+                    rng.random_range(-1000.0..-3.0)
                 } else {
-                    rng.random_range(3.0..10000.0)
+                    rng.random_range(3.0..1000.0)
                 },
-                rng.random_range(-10000.0..10000.0),
+                rng.random_range(-1000.0..1000.0),
                 if rng.random_bool(0.5) {
-                    rng.random_range(-10000.0..-3.0)
+                    rng.random_range(-1000.0..-3.0)
                 } else {
-                    rng.random_range(3.0..10000.0)
+                    rng.random_range(3.0..1000.0)
                 },
             );
 
