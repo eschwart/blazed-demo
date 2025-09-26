@@ -1,5 +1,4 @@
 use crate::*;
-use enum_unit::*;
 use glow::{
     BLEND, CULL_FACE, Context, DEPTH_TEST, FRAGMENT_SHADER, HasContext, LESS, NativeProgram,
     ONE_MINUS_SRC_ALPHA, SRC_ALPHA, VERTEX_SHADER,
@@ -9,18 +8,39 @@ use sdl2::{
     video::{GLContext, Window},
 };
 
-#[derive(Clone, Copy, Debug, EnumUnit)]
-pub enum Program {
-    Simple(NativeProgram),
-    Normal(NativeProgram),
+#[derive(Clone, Copy, Debug)]
+pub enum ProgramKind {
+    Simple,
+    Normal,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Program {
+    native: NativeProgram,
+    kind: ProgramKind,
 }
 
 impl Program {
-    pub const fn native(&self) -> NativeProgram {
-        match self {
-            Self::Simple(program) => *program,
-            Self::Normal(program) => *program,
+    pub const fn simple(native: NativeProgram) -> Self {
+        Self {
+            native,
+            kind: ProgramKind::Simple,
         }
+    }
+
+    pub const fn normal(native: NativeProgram) -> Self {
+        Self {
+            native,
+            kind: ProgramKind::Normal,
+        }
+    }
+
+    pub const fn native(&self) -> NativeProgram {
+        self.native
+    }
+
+    pub const fn kind(&self) -> ProgramKind {
+        self.kind
     }
 }
 
@@ -28,8 +48,8 @@ impl Program {
 pub struct Shaders {
     simple: Program,
     normal: Program,
-    // add shaders here (e.g.,
-    // penis: Program
+    // add other shaders here (e.g.,
+    // geometry: Program
 }
 
 impl Shaders {
@@ -127,11 +147,11 @@ pub fn init_shaders(gl: &Context) -> Result<Shaders> {
         ),
     ];
 
-    let simple_shader = process_shaders(gl, simple_shader_sources)?;
-    let normal_shader = process_shaders(gl, normal_shader_sources)?;
+    let simple_prog = process_shaders(gl, simple_shader_sources)?;
+    let normal_prog = process_shaders(gl, normal_shader_sources)?;
 
-    let simple = Program::Simple(simple_shader);
-    let normal = Program::Normal(normal_shader);
+    let simple = Program::simple(simple_prog);
+    let normal = Program::normal(normal_prog);
 
     let shaders = Shaders { simple, normal };
     Ok(shaders)
