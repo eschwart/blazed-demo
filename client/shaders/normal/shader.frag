@@ -6,8 +6,6 @@ in vec3 frag_norm;    // fragment normals
 
 out vec4 frag_col;    // fragment color
 
-uniform vec3 cam_pos; // camera's (eye) position
-
 // Point-Light
 struct P_Light {
     vec3 pos; // position
@@ -15,6 +13,8 @@ struct P_Light {
 };
 
 #define P_LIGHTS_MAX 16                 // TODO - figure out if we can make this dynamic?
+
+uniform vec3 cam_pos;                   // camera's (eye) position
 uniform int p_lights_len;               // current number of point lights
 uniform P_Light p_lights[P_LIGHTS_MAX]; // array of point lights
 
