@@ -8,8 +8,8 @@ out vec3 frag_pos;
 out vec4 obj_col;
 
 // camera attributes
-uniform mat4 view;
-uniform mat4 proj;
+layout(location = 0) uniform mat4 view;
+layout(location = 1) uniform mat4 proj;
 
 
 void main() {
