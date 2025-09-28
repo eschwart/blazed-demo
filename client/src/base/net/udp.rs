@@ -1,11 +1,12 @@
 use crate::*;
+use crossbeam_channel::Sender;
 use std::sync::atomic::AtomicU16;
 
 pub fn handle_udp(
     s: &SyncSelect,
-    udp: UdpClient,
+    event_sender: Arc<EventSender>,
     render_sender: Sender<()>,
-    event_sender: Sender<GameEvent>,
+    udp: UdpClient,
     tps: Arc<AtomicU16>,
     id: Id,
 ) {
@@ -36,7 +37,7 @@ pub fn handle_udp(
                 } else {
                     ObjectAction::Upt { data }
                 };
-                event_sender.send(GameEvent::Object(action))?;
+                event_sender.push_custom_event(GameEvent::Object(action))?;
                 _ = render_sender.try_send(());
             }
 

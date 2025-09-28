@@ -1,4 +1,5 @@
 use crate::*;
+use crossbeam_channel::Sender;
 use std::time::Instant;
 
 fn ping_handler(s: &SyncSelect, ping: Arc<RwLock<Duration>>, rate: Arc<RwLock<Duration>>) {
@@ -16,9 +17,9 @@ fn ping_handler(s: &SyncSelect, ping: Arc<RwLock<Duration>>, rate: Arc<RwLock<Du
 
 pub fn handle_tcp(
     s: &SyncSelect,
-    tcp: TcpClient,
+    event_sender: Arc<EventSender>,
     render_sender: Sender<()>,
-    event_sender: Sender<GameEvent>,
+    tcp: TcpClient,
     ping: Arc<RwLock<Duration>>,
     id: Id,
 ) {
@@ -42,7 +43,9 @@ pub fn handle_tcp(
 
                 RemObj::ID => {
                     let data = RemObj::deserialize(bytes);
-                    event_sender.send(GameEvent::Object(ObjectAction::Remove { id: data.id }))?;
+                    event_sender.push_custom_event(GameEvent::Object(ObjectAction::Remove {
+                        id: data.id,
+                    }))?;
                     _ = render_sender.try_send(());
                 }
                 UptObj::ID => {
@@ -71,7 +74,7 @@ pub fn handle_tcp(
                     } else {
                         ObjectAction::Add { data }
                     };
-                    event_sender.send(GameEvent::Object(action))?;
+                    event_sender.push_custom_event(GameEvent::Object(action))?;
                     _ = render_sender.try_send(());
                 }
 

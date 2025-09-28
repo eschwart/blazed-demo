@@ -7,7 +7,7 @@ use std::{net::Ipv4Addr, sync::atomic::AtomicU16, thread::sleep};
 pub fn handshake(
     tcp: &TcpClient,
     udp: &mut UdpClient,
-    event_sender: &Sender<GameEvent>,
+    event_sender: Arc<EventSender>,
 ) -> Result<Id> {
     debug!("[TCP] [1] Sending client handshake");
     tcp.send(&ClientHandshake::serialize())?;
@@ -34,7 +34,7 @@ pub fn handshake(
             Flush::ID => break,
             UptObj::ID => {
                 let data = UptObj::deserialize(&buf[1..n]);
-                event_sender.send(GameEvent::Object(ObjectAction::Add { data }))?;
+                event_sender.push_custom_event(GameEvent::Object(ObjectAction::Add { data }))?;
             }
             _ => unreachable!(),
         }
@@ -42,7 +42,7 @@ pub fn handshake(
     debug!("[TCP] [5] Finishing");
 
     // initial rendering
-    event_sender.send(GameEvent::Render(RenderAction::Flush))?;
+    event_sender.push_custom_event(GameEvent::Render(RenderAction::Flush))?;
 
     Ok(id)
 }
@@ -62,9 +62,9 @@ pub fn handle_input(s: &SyncSelect, mut udp: UdpClient, input_receiver: Receiver
 
 /// establish client-server handshake then initialize TCP/UDP threads and input thread
 pub fn handle_conn(
-    input_receiver: Receiver<Vec<u8>>,
+    event_sender: Arc<EventSender>,
     render_sender: Sender<()>,
-    event_sender: Sender<GameEvent>,
+    input_receiver: Receiver<Vec<u8>>,
     (tps, ping): (Arc<AtomicU16>, Arc<RwLock<Duration>>),
     cfg: &Config,
 ) -> Result<()> {
@@ -79,16 +79,16 @@ pub fn handle_conn(
     let mut udp = UdpClient::new(local_udp_addr, cfg.remote_udp_addr())?;
 
     // packet buffer for this client
-    let id = handshake(&tcp, &mut udp, &event_sender)?;
+    let id = handshake(&tcp, &mut udp, event_sender.clone())?;
 
     let s = SyncSelect::default();
 
     // handle outgoing TCP packets
     handle_tcp(
         &s,
-        tcp,
-        render_sender.clone(),
         event_sender.clone(),
+        render_sender.clone(),
+        tcp,
         ping,
         id,
     );
@@ -96,9 +96,9 @@ pub fn handle_conn(
     // handle outgoing UDP packets
     handle_udp(
         &s,
-        udp.clone(),
-        render_sender.clone(),
         event_sender,
+        render_sender.clone(),
+        udp.clone(),
         tps,
         id,
     );
@@ -111,19 +111,21 @@ pub fn handle_conn(
 
 pub fn init_conn(
     s: &SyncSelect,
-    input_receiver: Receiver<Vec<u8>>,
+    event_sender: Arc<EventSender>,
     render_sender: Sender<()>,
-    event_sender: Sender<GameEvent>,
+    input_receiver: Receiver<Vec<u8>>,
     stats: (Arc<AtomicU16>, Arc<RwLock<Duration>>),
     cfg: Config,
 ) {
     s.spawn(move || -> Result {
+        let event_sender = event_sender;
+
         loop {
             // initialize TCP and UDP connection
             let result = handle_conn(
-                input_receiver.clone(),
-                render_sender.clone(),
                 event_sender.clone(),
+                render_sender.clone(),
+                input_receiver.clone(),
                 stats.clone(),
                 &cfg,
             );
@@ -134,7 +136,7 @@ pub fn init_conn(
             }
 
             // reset game state
-            event_sender.send(GameEvent::Reset)?;
+            event_sender.push_custom_event(GameEvent::Reset)?;
 
             // reconnect timeout
             sleep(SECOND);

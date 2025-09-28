@@ -1,5 +1,5 @@
 use crate::*;
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{Receiver, Sender};
 use glow::{ARRAY_BUFFER, COLOR_BUFFER_BIT, Context, DEPTH_BUFFER_BIT, HasContext};
 use std::{
     io::{Write, stdout},
@@ -129,7 +129,7 @@ pub fn display(gl: &Context, window: &Window, cam: &RawCamera, objects: &RawObje
     }
 }
 
-fn handle_raw_events(
+fn handle_sys_events(
     s: &SyncSelect,
     (fps, ft, tps, ping): (
         Arc<Fps>,
@@ -138,25 +138,25 @@ fn handle_raw_events(
         Arc<RwLock<Duration>>,
     ),
     (mw_sender, mm_sender, kb_sender): (Sender<Wheel>, Sender<MotionOpt>, Sender<(Keys, bool)>),
-    (raw_event_receiver, event_sender): (Receiver<RawEvent>, Sender<GameEvent>),
+    (event_sender, sys_event_receiver): (Arc<EventSender>, Receiver<SysEvent>),
 ) {
     s.spawn(move || -> Result {
         let mut out = stdout();
 
-        for event in raw_event_receiver.into_iter() {
+        for event in sys_event_receiver.into_iter() {
             match event {
-                RawEvent::Quit => break,
-                RawEvent::MouseWheel(precise_y) => {
+                SysEvent::Quit => break,
+                SysEvent::MouseWheel(precise_y) => {
                     _ = mw_sender.try_send(Wheel { precise_y });
                 }
-                RawEvent::MouseMotion(xrel, yrel) => {
+                SysEvent::MouseMotion(xrel, yrel) => {
                     let opt = MotionOpt {
                         xrel: (xrel != 0).then_some(xrel),
                         yrel: (yrel != 0).then_some(yrel),
                     };
                     _ = mm_sender.try_send(opt);
                 }
-                RawEvent::Keyboard(kb, is_pressed) => {
+                SysEvent::Keyboard(kb, is_pressed) => {
                     if kb.contains(Keys::LEFT) {
                         let fps = fps.get();
                         let ft = *ft.read();
@@ -174,9 +174,8 @@ fn handle_raw_events(
                     }
                     _ = kb_sender.try_send((kb, is_pressed));
                 }
-                RawEvent::AspectRatio(w, h) => {
-                    event_sender.try_send(GameEvent::Render(RenderAction::AspectRatio { w, h }))?
-                }
+                SysEvent::AspectRatio(w, h) => event_sender
+                    .push_custom_event(GameEvent::Render(RenderAction::AspectRatio { w, h }))?,
             }
         }
         Ok(())
@@ -186,14 +185,14 @@ fn handle_raw_events(
 /// Facilitate all user input.
 fn process_input(
     s: &SyncSelect,
+    event_sender: Arc<EventSender>,
+    input_sender: Sender<Vec<u8>>,
+    render_sender: Sender<()>,
     (mw_receiver, mm_receiver, kb_receiver): (
         Receiver<Wheel>,
         Receiver<MotionOpt>,
         Receiver<(Keys, bool)>,
     ),
-    render_sender: Sender<()>,
-    input_sender: Sender<Vec<u8>>,
-    event_sender: Sender<GameEvent>,
 ) {
     fn advance(render_sender: &Sender<()>, spinner: SpinSleeper) {
         // notify renderer
@@ -205,17 +204,17 @@ fn process_input(
 
     fn process_mw(
         s: &SyncSelect,
-        mw_receiver: Receiver<Wheel>,
-        render_sender: Sender<()>,
-        event_sender: Sender<GameEvent>,
+        event_sender: Arc<EventSender>,
         input_sender: Sender<Vec<u8>>,
+        render_sender: Sender<()>,
+        mw_receiver: Receiver<Wheel>,
     ) -> JoinHandle<Result> {
         s.spawn(move || -> Result {
             let spinner = SpinSleeper::default();
 
             loop {
                 let wheel = mw_receiver.recv()?;
-                event_sender.send(GameEvent::User(UserAction::Wheel(wheel)))?;
+                event_sender.push_custom_event(GameEvent::User(UserAction::Wheel(wheel)))?;
 
                 advance(&render_sender, spinner);
                 _ = input_sender.try_send(wheel.serialize().to_vec());
@@ -225,10 +224,10 @@ fn process_input(
 
     fn process_mm(
         s: &SyncSelect,
-        mm_receiver: Receiver<MotionOpt>,
-        render_sender: Sender<()>,
-        event_sender: Sender<GameEvent>,
+        event_sender: Arc<EventSender>,
         input_sender: Sender<Vec<u8>>,
+        render_sender: Sender<()>,
+        mm_receiver: Receiver<MotionOpt>,
     ) -> JoinHandle<Result> {
         s.spawn(move || -> Result {
             let spinner = SpinSleeper::default();
@@ -239,7 +238,7 @@ fn process_input(
                     xrel: opt.xrel.unwrap_or_default(),
                     yrel: opt.yrel.unwrap_or_default(),
                 };
-                event_sender.send(GameEvent::User(UserAction::Motion(motion)))?;
+                event_sender.push_custom_event(GameEvent::User(UserAction::Motion(motion)))?;
 
                 advance(&render_sender, spinner);
                 _ = input_sender.try_send(opt.serialize().to_vec());
@@ -249,16 +248,16 @@ fn process_input(
 
     fn process_kb(
         s: &SyncSelect,
-        kb_receiver: Receiver<(Keys, bool)>,
-        render_sender: Sender<()>,
-        event_sender: Sender<GameEvent>,
+        event_sender: Arc<EventSender>,
         input_sender: Sender<Vec<u8>>,
+        render_sender: Sender<()>,
+        kb_receiver: Receiver<(Keys, bool)>,
     ) -> JoinHandle<Result> {
         fn cont_handler(
             s: &SyncSelect,
             waiter: Waiter,
             keys_cont: AtomicKeys,
-            event_sender: Sender<GameEvent>,
+            event_sender: Arc<EventSender>,
             render_sender: Sender<()>,
         ) -> JoinHandle<Result> {
             s.spawn(move || {
@@ -274,7 +273,8 @@ fn process_input(
                             break;
                         }
                         // send input to client event handler
-                        event_sender.send(GameEvent::User(UserAction::Keyboard(kb)))?;
+                        event_sender
+                            .push_custom_event(GameEvent::User(UserAction::Keyboard(kb)))?;
 
                         // render the change
                         advance(&render_sender, spinner);
@@ -290,7 +290,7 @@ fn process_input(
             notifier: Notifier,
             mut keys_cont: AtomicKeys,
             kb_receiver: Receiver<(Keys, bool)>,
-            event_sender: Sender<GameEvent>,
+            event_sender: Arc<EventSender>,
             input_sender: Sender<Vec<u8>>,
         ) -> JoinHandle<Result> {
             s.spawn(move || {
@@ -334,7 +334,8 @@ fn process_input(
                         } else {
                             keys_norm -= key
                         }
-                        event_sender.send(GameEvent::User(UserAction::Keyboard(keys_norm)))?;
+                        event_sender
+                            .push_custom_event(GameEvent::User(UserAction::Keyboard(keys_norm)))?;
                     }
                 }
             })
@@ -363,34 +364,34 @@ fn process_input(
     // process mouse wheel input
     process_mw(
         s,
-        mw_receiver,
-        render_sender.clone(),
         event_sender.clone(),
         input_sender.clone(),
+        render_sender.clone(),
+        mw_receiver,
     );
 
     // process mouse motion input
     process_mm(
         s,
-        mm_receiver,
-        render_sender.clone(),
         event_sender.clone(),
         input_sender.clone(),
+        render_sender.clone(),
+        mm_receiver,
     );
 
     // process keyboard input
-    process_kb(s, kb_receiver, render_sender, event_sender, input_sender);
+    process_kb(s, event_sender, input_sender, render_sender, kb_receiver);
 }
 
-fn handle_rendering_uncapped(
+pub fn handle_rendering_uncapped(
     s: &SyncSelect,
     state: RenderState,
     fps: Arc<Fps>,
-    event_sender: Sender<GameEvent>,
+    event_sender: Arc<EventSender>,
     render_receiver: Receiver<()>,
 ) -> JoinHandle<RenderStateKind> {
     let render = move || -> Result {
-        event_sender.send(GameEvent::Render(RenderAction::Flush))?;
+        event_sender.push_custom_event(GameEvent::Render(RenderAction::Flush))?;
 
         // increment frame count
         fps.incr();
@@ -417,10 +418,10 @@ fn handle_rendering_uncapped(
     })
 }
 
-fn handle_rendering_capped(
+pub fn handle_rendering_capped(
     s: &SyncSelect,
     state: RenderState,
-    event_sender: Sender<GameEvent>,
+    event_sender: Arc<EventSender>,
     render_receiver: Receiver<()>,
     (fps_sender, fps_receiver): (Sender<()>, Receiver<()>),
 ) -> JoinHandle<RenderStateKind> {
@@ -429,7 +430,7 @@ fn handle_rendering_capped(
         fps_sender.send(())?;
 
         // render objects
-        event_sender.send(GameEvent::Render(RenderAction::Flush))?;
+        event_sender.push_custom_event(GameEvent::Render(RenderAction::Flush))?;
 
         // signal to stop
         fps_sender.send(())?;
@@ -461,58 +462,58 @@ fn handle_rendering_capped(
 
 pub fn render_loop(
     s: &SyncSelect,
-    state: RenderState,
-    (raw_event_receiver, event_sender): (Receiver<RawEvent>, Sender<GameEvent>),
-    channel_fps: (Sender<()>, Receiver<()>),
-    (fps, ft, tps, ping): (
+    (event_sender, fps_sender): (Arc<EventSender>, Sender<()>),
+    (sys_event_receiver, fps_receiver): (Receiver<SysEvent>, Receiver<()>),
+    (fps, ft, tps, ping, state): (
         Arc<Fps>,
         Arc<RwLock<Duration>>,
         Arc<AtomicU16>,
         Arc<RwLock<Duration>>,
+        Arc<AtomicRenderStateKind>,
     ),
     cfg: Config,
-) {
+) -> JoinHandle<Result> {
     let (mm_sender, mm_receiver) = bounded(1);
     let (mw_sender, mw_receiver) = bounded(1);
     let (kb_sender, kb_receiver) = bounded(1);
 
-    let (render_sender, render_receiver) = bounded(1);
     let (input_sender, input_receiver) = bounded(1);
+    let (render_sender, render_receiver) = bounded(1);
 
+    // Networking
     if cfg.is_online() {
-        // NETWORKING
-        //
         // init TCP and UDP threads
         init_conn(
             s,
-            input_receiver,
-            render_sender.clone(),
             event_sender.clone(),
+            render_sender.clone(),
+            input_receiver,
             (tps.clone(), ping.clone()),
             cfg,
         );
     }
 
     // handle input throughput
-    handle_raw_events(
+    handle_sys_events(
         s,
         (fps.clone(), ft, tps, ping),
         (mm_sender, mw_sender, kb_sender),
-        (raw_event_receiver, event_sender.clone()),
+        (event_sender.clone(), sys_event_receiver),
     );
 
     // process current input in real-time
     process_input(
         s,
-        (mm_receiver, mw_receiver, kb_receiver),
-        render_sender,
-        input_sender,
         event_sender.clone(),
+        input_sender,
+        render_sender,
+        (mm_receiver, mw_receiver, kb_receiver),
     );
 
     // facilitate frame renders
     s.spawn(move || -> Result {
         let s = SyncSelect::default();
+        let channel_fps = (fps_sender, fps_receiver);
 
         loop {
             let state_kind = if fps.target() > 0 {
@@ -542,5 +543,5 @@ pub fn render_loop(
                 _ => unreachable!(),
             }
         }
-    });
+    })
 }
