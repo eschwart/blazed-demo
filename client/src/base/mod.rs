@@ -114,7 +114,7 @@ pub enum GameEvent {
 
 /// Event wrappers related to the backend.
 #[derive(Clone, Copy, Debug)]
-pub enum RawEvent {
+pub enum SysEvent {
     Quit,
     MouseWheel(f32),
     MouseMotion(i32, i32),
