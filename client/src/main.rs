@@ -3,8 +3,8 @@
 mod base;
 
 use base::*;
-use crossbeam_channel::{Receiver, Sender, bounded};
-use glow::{FILL, FRONT_AND_BACK, HasContext, LINE};
+use crossbeam_channel::{Sender, bounded};
+use glow::HasContext;
 use rand::Rng;
 use sdl2::{
     EventPump, TimerSubsystem,
@@ -20,45 +20,41 @@ use std::{
 use sync_select::*;
 use ultraviolet::Vec3;
 
-fn handle_sync_select(s: SyncSelect, event_sender: Sender<GameEvent>) -> JoinHandle<Result> {
+#[cfg(debug_assertions)]
+use glow::{FILL, FRONT_AND_BACK, LINE};
+
+fn handle_sync_select(s: SyncSelect, event_sender: EventSender) -> JoinHandle<Result> {
     // unhandled new thread
     spawn(move || {
         s.join(); // wait for any thread to finish
         error!("[SyncSelect] A thread has unexpectedly finished.");
-        event_sender.send(GameEvent::Quit).map_err(Into::into)
+        event_sender
+            .push_custom_event(GameEvent::Quit)
+            .map_err(Into::into)
     })
 }
 
-fn handle_ctrlc(s: &SyncSelect, event_sender: Sender<GameEvent>) -> Result {
+fn handle_ctrlc(s: &SyncSelect, event_sender: Arc<EventSender>) -> Result {
     let thread = s.thread();
 
     ctrlc::set_handler(move || {
         thread.unpark();
 
-        if event_sender.send(GameEvent::Quit).is_err() {
+        if event_sender.push_custom_event(GameEvent::Quit).is_err() {
             error!("Failed to notify event handler to quit")
         }
     })
     .map_err(Into::into)
 }
 
-fn handle_game_events(s: &SyncSelect, receiver: Receiver<GameEvent>, sender: EventSender) {
-    s.spawn(move || -> Result {
-        while let Ok(event) = receiver.recv() {
-            _ = sender.push_custom_event(event);
-        }
-        Ok(())
-    });
-}
-
 // TOP-LEVEL THREAD (the godfather)
-fn process_raw_events(
+fn process_events(
     gl: &GL,
     window: Window,
     timer_fps_cfg: &mut impl FnMut(Id) -> Id,
     mut ep: EventPump,
     (cam, objects, state): (Camera, ObjectsRef, RenderState),
-    raw_event_sender: Sender<RawEvent>,
+    sys_event_sender: Sender<SysEvent>,
     ft: Arc<RwLock<Duration>>,
 ) -> Result {
     #[cfg(debug_assertions)]
@@ -184,18 +180,18 @@ fn process_raw_events(
                 ..
             } => {
                 state.store(RenderStateKind::Quit, Ordering::Release);
-                raw_event_sender.send(RawEvent::Quit)?;
+                sys_event_sender.send(SysEvent::Quit)?;
                 break;
             }
             Event::Window {
                 win_event: WindowEvent::SizeChanged(w, h),
                 ..
-            } => raw_event_sender.send(RawEvent::AspectRatio(w, h))?,
+            } => sys_event_sender.send(SysEvent::AspectRatio(w, h))?,
             Event::MouseWheel { precise_y, .. } => {
-                raw_event_sender.send(RawEvent::MouseWheel(precise_y))?
+                sys_event_sender.send(SysEvent::MouseWheel(precise_y))?
             }
             Event::MouseMotion { xrel, yrel, .. } => {
-                raw_event_sender.send(RawEvent::MouseMotion(xrel, yrel))?
+                sys_event_sender.send(SysEvent::MouseMotion(xrel, yrel))?
             }
             Event::KeyDown {
                 scancode: Some(key),
@@ -203,7 +199,7 @@ fn process_raw_events(
                 ..
             } => {
                 if let Some(keys) = try_from_scancode(key) {
-                    _ = raw_event_sender.try_send(RawEvent::Keyboard(keys, true));
+                    _ = sys_event_sender.try_send(SysEvent::Keyboard(keys, true));
 
                     // DEBUGGING
                     #[cfg(debug_assertions)]
@@ -228,7 +224,7 @@ fn process_raw_events(
                 ..
             } => {
                 if let Some(keys) = try_from_scancode(key) {
-                    _ = raw_event_sender.try_send(RawEvent::Keyboard(keys, false))
+                    _ = sys_event_sender.try_send(SysEvent::Keyboard(keys, false))
                 }
             }
             _ => (),
@@ -248,6 +244,8 @@ fn main() -> Result {
     let (sdl, video, timer, gl, window, ev, ep, _ctx) = init()?;
     video.gl_set_swap_interval(SwapInterval::Immediate)?;
     sdl.mouse().set_relative_mouse_mode(true);
+
+    // all of the custom events
     ev.register_custom_event::<GameEvent>()?;
 
     // program shaders
@@ -268,8 +266,8 @@ fn main() -> Result {
     });
 
     // individual frame facilitation channels
-    let (fps_sender_1, fps_receiver_1) = bounded::<()>(1);
-    let (fps_sender_2, fps_receiver_2) = bounded::<()>(1);
+    let (fps_sender_1, fps_receiver_1) = bounded(1);
+    let (fps_sender_2, fps_receiver_2) = bounded(1);
 
     // frame verification process
     let fps_clone = fps.clone();
@@ -325,10 +323,6 @@ fn main() -> Result {
     timer_fps_cfg(cfg.fps());
     ///////////////////////////////////////////////////////////////////////////////////////////
 
-    // real-time user input
-    let (raw_event_sender, raw_event_receiver) = bounded::<RawEvent>(32);
-    let (event_sender, event_receiver) = bounded::<GameEvent>(32);
-
     // TODO - please implement instanced-based rendering
     let objects = {
         let mut raw = RawObjects::new(&gl, &programs)?;
@@ -373,9 +367,9 @@ fn main() -> Result {
             true,
         );
 
-        // DEBUGGING - generate random cubes (none of this is instanced-based)
+        // DEBUGGING - generate random cubes
         let mut rng = rand::rng();
-        for id in 5..u8::MAX {
+        for id in 5..4096 {
             let pos = Vec3::new(
                 if rng.random_bool(0.5) {
                     rng.random_range(-1000.0..-3.0)
@@ -426,33 +420,39 @@ fn main() -> Result {
     // short-circuiting local thread manager
     let s = SyncSelect::default();
 
+    // event senders/receivers
+    let event_sender = Arc::new(ev.event_sender());
+    let (sys_event_sender, sys_event_receiver) = bounded(32);
+
     // handle SIGINT
     handle_ctrlc(&s, event_sender.clone())?;
 
-    // facilitate game events
-    handle_game_events(&s, event_receiver, ev.event_sender());
-
     // input & network handling
-    render_loop(
+    let _state = render_loop(
         &s,
-        state.clone(),
-        (raw_event_receiver, event_sender.clone()),
-        (fps_sender_1, fps_receiver_2),
-        (fps, ft.clone(), Default::default(), Default::default()),
+        (event_sender.clone(), fps_sender_1),
+        (sys_event_receiver, fps_receiver_2),
+        (
+            fps.clone(),
+            ft.clone(),
+            Default::default(),
+            Default::default(),
+            state.clone(),
+        ),
         cfg,
     );
 
     // post short-circuitry handler
-    let _ss = handle_sync_select(s, event_sender);
+    let _ss = handle_sync_select(s, ev.event_sender());
 
     // main thread
-    if let Err(e) = process_raw_events(
+    if let Err(e) = process_events(
         &gl,
         window,
         &mut timer_fps_cfg,
         ep,
         (cam, &objects, state),
-        raw_event_sender,
+        sys_event_sender,
         ft,
     ) {
         error!("{e}")
