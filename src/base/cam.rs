@@ -56,7 +56,6 @@ impl SubAssign<i32> for Axis {
 
 #[derive(Clone, Copy, Debug, WithOpt)]
 #[wopt(derive(Clone, Copy, Debug, Default))]
-#[wopt(id = 10)]
 pub struct CameraAttr {
     pub fov: f32,     // client's (player) field-of-vision
     pub speed: f32,   // player speed

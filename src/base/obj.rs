@@ -48,7 +48,6 @@ impl Default for Color {
 
 #[derive(Clone, Copy, Debug, WithOpt)]
 #[wopt(derive(Clone, Copy, Debug, Default))]
-#[wopt(id = 12)]
 pub struct Transformations {
     pub translation: Mat4,
     pub rotation: Mat4,
