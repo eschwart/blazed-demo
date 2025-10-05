@@ -23,7 +23,7 @@ rand = "0.9.2"
 sync_select = "0.2.3"
 thiserror = "2.0.16"
 ultraviolet = { version = "0.10.0", features = ["bytemuck"] }
-wopt = { version = "0.4.2", features = ["bytemuck"] }
+wopt = { version = "0.4.4", features = ["bytemuck"] }
 
 [dependencies]
 atomflag = { workspace = true }
